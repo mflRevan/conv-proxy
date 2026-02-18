@@ -65,6 +65,17 @@ export function connect() {
         clearTimeout(reconnectTimeout);
         reconnectTimeout = null;
       }
+
+      fetch('/api/bridge/status')
+        .then(r => r.json())
+        .then(data => {
+          agentPanel.update(s => ({
+            ...s,
+            bridgeConfigured: !!data.configured,
+            bridgeSessionId: data.session_id || '',
+          }));
+        })
+        .catch(() => {});
     };
 
     ws.onmessage = (event) => {
@@ -125,6 +136,8 @@ function handleMessage(msg: any) {
         ...s,
         status: msg.agent_status || s.status,
         queuedTask: msg.queued_task || s.queuedTask,
+        bridgeConfigured: !!msg.bridge?.configured || s.bridgeConfigured,
+        bridgeSessionId: msg.bridge?.session_id || s.bridgeSessionId,
       }));
       break;
 
@@ -189,6 +202,7 @@ function handleMessage(msg: any) {
       agentPanel.update(s => ({
         ...s,
         queuedTask: msg.queued_task ?? s.queuedTask,
+        pulseToken: Date.now(),
       }));
       if (msg.action === 'queued' && msg.queued_task) {
         startDispatchCountdown(10);
@@ -230,6 +244,7 @@ function handleMessage(msg: any) {
     case 'tool_called':
       agentPanel.update(s => ({
         ...s,
+        pulseToken: Date.now(),
         toolEvents: [
           {
             id: nextAgentId('tool'),
@@ -262,8 +277,16 @@ function handleMessage(msg: any) {
 
     case 'dispatch_ready':
       clearDispatchCountdown();
-      agentPanel.update(s => ({ ...s, queuedTask: msg.task || s.queuedTask }));
+      agentPanel.update(s => ({ ...s, queuedTask: msg.task || s.queuedTask, pulseToken: Date.now() }));
       break;
+    case 'bridge_status':
+      agentPanel.update(s => ({
+        ...s,
+        bridgeConfigured: !!msg.configured,
+        bridgeSessionId: msg.session_id || '',
+      }));
+      break;
+
 
     case 'done': {
       const convState = get(conversation);
@@ -295,6 +318,8 @@ function handleMessage(msg: any) {
         ...s,
         status: msg.agent_status || s.status,
         queuedTask: msg.queued_task ?? s.queuedTask,
+        bridgeConfigured: !!msg.bridge?.configured || s.bridgeConfigured,
+        bridgeSessionId: msg.bridge?.session_id || s.bridgeSessionId,
       }));
       if (msg.queued_task && msg.agent_status === 'idle') {
         startDispatchCountdown(10);

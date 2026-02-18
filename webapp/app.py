@@ -22,7 +22,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional, Any
-import subprocess
 
 import numpy as np
 import soundfile as sf
@@ -71,9 +70,12 @@ _voice_clients: set[WebSocket] = set()
 _mock_task: asyncio.Task | None = None
 
 # OpenClaw bridge target session (session-id based)
-_bridge_session_id: str = os.getenv("OPENCLAW_BRIDGE_SESSION_ID", "").strip()
-_bridge_last_result: str = ""
-_bridge_last_error: str = ""
+_BRIDGE_FILE = ROOT / '.bridge_session_id'
+_bridge_session_id: str = os.getenv('OPENCLAW_BRIDGE_SESSION_ID', '').strip()
+if not _bridge_session_id and _BRIDGE_FILE.exists():
+    _bridge_session_id = _BRIDGE_FILE.read_text(encoding='utf-8').strip()
+_bridge_last_result: str = ''
+_bridge_last_error: str = ''
 
 
 async def _broadcast(msg: dict):
@@ -193,6 +195,10 @@ async def bridge_bind(body: dict) -> JSONResponse:
     _bridge_session_id = sid
     _bridge_last_error = ""
     _bridge_last_result = ""
+    try:
+        _BRIDGE_FILE.write_text(_bridge_session_id, encoding="utf-8")
+    except Exception:
+        pass
     await _broadcast({"type": "bridge_status", "configured": bool(_bridge_session_id), "session_id": _bridge_session_id})
     return JSONResponse({"ok": True, "session_id": _bridge_session_id, "configured": bool(_bridge_session_id)})
 
@@ -333,6 +339,7 @@ async def chat_ws(ws: WebSocket) -> None:
         "agent_status": _proxy.state.agent_status,
         "task_draft": _proxy.state.scratchpad_task,
         "queued_task": _proxy.state.queued_task,
+        "bridge": {"configured": bool(_bridge_session_id), "session_id": _bridge_session_id},
     }))
 
     loop = asyncio.get_event_loop()
@@ -531,6 +538,7 @@ async def voice_ws(ws: WebSocket) -> None:
         "agent_status": _proxy.state.agent_status,
         "task_draft": _proxy.state.scratchpad_task,
         "queued_task": _proxy.state.queued_task,
+        "bridge": {"configured": bool(_bridge_session_id), "session_id": _bridge_session_id},
         "stt_backend": pipeline.stt_backend,
         "vad_config": {
             "energy_threshold": pipeline.vad_config.energy_threshold,
@@ -727,8 +735,10 @@ async def _dispatch_loop():
             if ok:
                 brief = result or "Task dispatched to bound session."
                 _proxy.update_agent_context(status="idle", current_task="", just_finished=True, completion_brief=brief)
+                brief_ready = _proxy.pop_pending_completion_brief() or brief
                 await _broadcast({"type": "agent_status", "status": "idle", "current_task": ""})
-                await _broadcast({"type": "agent_brief", "content": brief})
+                await _broadcast({"type": "agent_brief", "content": brief_ready})
+                await _broadcast({"type": "agent_progress", "state": "done", "title": "Dispatch complete", "content": brief_ready})
             else:
                 _proxy.update_agent_context(status="idle", current_task="")
                 await _broadcast({"type": "agent_status", "status": "idle", "current_task": ""})

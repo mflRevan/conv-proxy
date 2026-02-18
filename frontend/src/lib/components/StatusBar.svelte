@@ -2,6 +2,7 @@
   import { connection } from '../stores/connection';
   import { audio } from '../stores/audio';
   import { settings } from '../stores/settings';
+  import { agentPanel } from '../stores/agent';
 
   $: statusColor = 
     $connection.status === 'connected' ? '#10b981' :
@@ -38,13 +39,18 @@
       <span class="model-badge">{$connection.model}</span>
     {/if}
     <span class="activity">{activityText}</span>
+    <span class="bridgeBadge" class:on={$agentPanel.bridgeConfigured}>{$agentPanel.bridgeConfigured ? "Agent linked" : "Mock/offline"}</span>
   </div>
 
   <div class="actions">
     <button class="settings-button" on:click={toggleSettings} aria-label="Settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M12 1v6m0 6v6M3.5 3.5l4.2 4.2m8.6 8.6l4.2 4.2M1 12h6m6 0h6M3.5 20.5l4.2-4.2m8.6-8.6l4.2-4.2"/>
+        <line x1="4" y1="6" x2="20" y2="6"/>
+        <line x1="4" y1="12" x2="20" y2="12"/>
+        <line x1="4" y1="18" x2="20" y2="18"/>
+        <circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"/>
+        <circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/>
+        <circle cx="11" cy="18" r="2" fill="currentColor" stroke="none"/>
       </svg>
     </button>
   </div>
@@ -105,6 +111,9 @@
     font-style: italic;
   }
 
+  .bridgeBadge { font-size:.72rem; color:#94a3b8; border:1px solid rgba(148,163,184,.25); padding:3px 8px; border-radius:999px; }
+  .bridgeBadge.on { color:#86efac; border-color: rgba(74,222,128,.35); background: rgba(20,83,45,.25); }
+
   .actions { display:flex; align-items:center; gap:8px; }
 
   .settings-button {
@@ -145,3 +154,4 @@
     }
   }
 </style>
+

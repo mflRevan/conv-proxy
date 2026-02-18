@@ -9,6 +9,35 @@
     'whisper-medium',
   ];
 
+  let bridgeSessionId = "";
+  let bridgeConfigured = false;
+
+  async function refreshBridge() {
+    try {
+      const res = await fetch('/api/bridge/status');
+      const data = await res.json();
+      bridgeSessionId = data.session_id || "";
+      bridgeConfigured = !!data.configured;
+    } catch {}
+  }
+
+  async function bindBridge() {
+    await fetch('/api/bridge/bind', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: bridgeSessionId.trim() }),
+    });
+    await refreshBridge();
+  }
+
+  async function startMockFlow() {
+    await fetch('/api/mock-agent/start', { method: 'POST' });
+  }
+
+  async function stopMockFlow() {
+    await fetch('/api/mock-agent/stop', { method: 'POST' });
+  }
+
   function close() {
     settings.update(s => ({ ...s, showSettings: false }));
   }
@@ -23,6 +52,10 @@
     if (e.key === 'Escape') {
       close();
     }
+  }
+
+  $: if ($settings.showSettings) {
+    refreshBridge();
   }
 </script>
 
@@ -113,6 +146,24 @@
             <span>Auto-send on silence</span>
           </label>
           <p class="hint">Turn handling is voice-first; silence triggers processing.</p>
+        </div>
+
+        <div class="setting-group">
+          <label for="bridge-session">Agent Bridge Session</label>
+          <div class="bridge-row">
+            <input id="bridge-session" type="text" bind:value={bridgeSessionId} placeholder="OpenClaw session id" />
+            <button class="mini-btn" on:click={bindBridge}>Bind</button>
+          </div>
+          <p class="hint">Status: {bridgeConfigured ? 'connected' : 'not bound'}</p>
+        </div>
+
+        <div class="setting-group">
+          <p class="group-title">Mock Agent Flow</p>
+          <div class="bridge-row">
+            <button class="mini-btn" on:click={startMockFlow}>Start mock</button>
+            <button class="mini-btn danger" on:click={stopMockFlow}>Stop mock</button>
+          </div>
+          <p class="hint">Use this when real bridge is unavailable.</p>
         </div>
       </div>
     </div>
@@ -220,6 +271,13 @@
     margin-bottom: 0;
   }
 
+  .group-title {
+    margin: 0 0 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #cbd5e1;
+  }
+
   .setting-group > label {
     display: block;
     font-size: 0.9rem;
@@ -310,6 +368,25 @@
     align-items: center;
     gap: 12px;
   }
+
+  .bridge-row { display:flex; gap:10px; align-items:center; }
+  .bridge-row input {
+    flex:1;
+    padding: 10px 12px;
+    background: rgba(15,23,42,.8);
+    border: 1px solid rgba(59,130,246,.25);
+    border-radius: 8px;
+    color: #e2e8f0;
+  }
+  .mini-btn {
+    padding: 9px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(59,130,246,.3);
+    background: rgba(30,41,59,.65);
+    color: #dbeafe;
+    cursor:pointer;
+  }
+  .mini-btn.danger { border-color: rgba(239,68,68,.35); color:#fecaca; }
 
   input[type="range"] {
     flex: 1;

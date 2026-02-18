@@ -45,13 +45,13 @@
       {#each $conversation.messages as msg (msg.id)}
         <div class="message" class:user={msg.role === 'user'} class:assistant={msg.role === 'assistant'}>
           <div class="message-content">
-            <p>{msg.content}</p>
             {#if msg.reasoning}
               <details class="reasoning">
-                <summary>View reasoning</summary>
+                <summary>Reasoning</summary>
                 <pre>{msg.reasoning}</pre>
               </details>
             {/if}
+            <p>{msg.content}</p>
           </div>
         </div>
       {/each}
@@ -59,13 +59,13 @@
       {#if $conversation.currentResponse}
         <div class="message assistant streaming">
           <div class="message-content">
-            <p>{$conversation.currentResponse}<span class="cursor">▊</span></p>
             {#if $conversation.currentReasoning}
               <details class="reasoning" open>
                 <summary>Reasoning</summary>
                 <pre>{$conversation.currentReasoning}</pre>
               </details>
             {/if}
+            <p>{$conversation.currentResponse}<span class="cursor">▊</span></p>
           </div>
         </div>
       {/if}
@@ -76,6 +76,8 @@
 <style>
   .response-container {
     flex: 1;
+    height: 100%;
+    min-height: 0;
     overflow-y: auto;
     padding: 20px;
     display: flex;
@@ -132,13 +134,14 @@
 
   .messages {
     display: flex;
+    min-height: min-content;
     flex-direction: column;
     gap: 16px;
   }
 
   .message {
     display: flex;
-    animation: slideIn 0.3s ease;
+    animation: slideIn 0.32s cubic-bezier(.2,.8,.2,1);
   }
 
   .message.user {
@@ -196,19 +199,21 @@
   }
 
   .reasoning {
-    margin-top: 12px;
-    padding: 12px;
-    background: rgba(0, 0, 0, 0.2);
+    margin: 0 0 8px;
+    padding: 6px 8px;
+    background: rgba(2, 6, 23, 0.45);
+    border: 1px solid rgba(148,163,184,.16);
     border-radius: 8px;
-    font-size: 0.85rem;
+    font-size: 0.72rem;
   }
 
   .reasoning summary {
     cursor: pointer;
     color: #94a3b8;
-    font-size: 0.8rem;
-    margin-bottom: 8px;
+    font-size: 0.68rem;
+    letter-spacing: .02em;
     user-select: none;
+    list-style: none;
   }
 
   .reasoning summary:hover {
@@ -216,13 +221,15 @@
   }
 
   .reasoning pre {
-    margin: 0;
+    margin: 6px 0 0;
     white-space: pre-wrap;
     word-wrap: break-word;
     color: #cbd5e1;
     font-family: 'Monaco', 'Menlo', monospace;
-    font-size: 0.75rem;
-    line-height: 1.4;
+    font-size: 0.68rem;
+    line-height: 1.3;
+    max-height: 120px;
+    overflow: auto;
   }
 
   @media (max-width: 640px) {

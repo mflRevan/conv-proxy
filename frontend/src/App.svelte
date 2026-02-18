@@ -82,6 +82,8 @@
 
   .chat-shell {
     min-height: 0;
+    display:flex;
+    flex-direction:column;
     border-radius: 18px;
     border: 1px solid rgba(96,165,250,.22);
     background: linear-gradient(180deg, rgba(15,23,42,.56), rgba(2,6,23,.5));

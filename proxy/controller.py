@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import time
 import threading
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Generator
@@ -74,6 +75,44 @@ def _load_fixed_proxy_prompt() -> str:
 
 
 FIXED_PROXY_PROMPT = _load_fixed_proxy_prompt()
+
+_CALL_MARKERS_RE = re.compile(r"<\|[^>]+\|>")
+
+
+def _clean_tool_args(raw: str) -> str:
+    if not raw:
+        return ""
+    s = _CALL_MARKERS_RE.sub("", raw).strip()
+    # if model appended extra junk after valid JSON, keep through last brace
+    if "}" in s and s.count("{") >= 1:
+        last = s.rfind("}")
+        s = s[: last + 1]
+    return s.strip()
+
+
+def _parse_tool_args(raw: str) -> dict:
+    cleaned = _clean_tool_args(raw)
+    if not cleaned:
+        return {}
+    try:
+        data = json.loads(cleaned)
+        return data if isinstance(data, dict) else {"value": data}
+    except Exception:
+        return {"task": cleaned}
+
+
+def _normalize_task_text(task: str) -> str:
+    t = (task or "").strip()
+    if not t:
+        return ""
+    # If task is sent as JSON string, unwrap to raw text task
+    try:
+        parsed = json.loads(t)
+        if isinstance(parsed, dict) and isinstance(parsed.get("task"), str):
+            return parsed["task"].strip()
+    except Exception:
+        pass
+    return t
 
 
 def _build_system_prompt(state: "ProxyState") -> str:
@@ -177,10 +216,7 @@ class ProxyController:
         for tc in tool_calls:
             fn_name = tc["function"]["name"]
             raw_args = tc["function"].get("arguments", "")
-            try:
-                fn_args = json.loads(raw_args) if raw_args else {}
-            except json.JSONDecodeError:
-                fn_args = {"task": raw_args}
+            fn_args = _parse_tool_args(raw_args)
 
             if fn_name == "interrupt_agent":
                 action = "stop"
@@ -190,7 +226,7 @@ class ProxyController:
 
             elif fn_name == "set_task_buffer":
                 action = "buffer"
-                task_text = fn_args.get("task", "")
+                task_text = _normalize_task_text(fn_args.get("task", ""))
                 if task_text:
                     self.state.scratchpad_task = task_text
                     if self.on_task_updated:
@@ -253,10 +289,7 @@ class ProxyController:
             elif dt == "tool_call":
                 fn_name = delta["name"]
                 raw_args = delta.get("arguments", "")
-                try:
-                    fn_args = json.loads(raw_args) if raw_args else {}
-                except json.JSONDecodeError:
-                    fn_args = {}
+                fn_args = _parse_tool_args(raw_args)
 
                 if fn_name == "interrupt_agent":
                     self.state.queued_task = ""
@@ -265,7 +298,7 @@ class ProxyController:
                     yield {"type": "action", "action": "stop"}
 
                 elif fn_name == "set_task_buffer":
-                    task_text = fn_args.get("task", "")
+                    task_text = _normalize_task_text(fn_args.get("task", ""))
                     if task_text:
                         self.state.scratchpad_task = task_text
                         if self.on_task_updated:

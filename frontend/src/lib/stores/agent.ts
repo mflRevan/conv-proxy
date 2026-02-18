@@ -23,6 +23,9 @@ export interface AgentPanelState {
   toolEvents: ToolEvent[];
   queuedTask: string;
   dispatchCountdown: number | null;
+  bridgeConfigured: boolean;
+  bridgeSessionId: string;
+  pulseToken: number;
 }
 
 const initial: AgentPanelState = {
@@ -32,6 +35,9 @@ const initial: AgentPanelState = {
   toolEvents: [],
   queuedTask: '',
   dispatchCountdown: null,
+  bridgeConfigured: false,
+  bridgeSessionId: '',
+  pulseToken: 0,
 };
 
 export const agentPanel = writable<AgentPanelState>(initial);

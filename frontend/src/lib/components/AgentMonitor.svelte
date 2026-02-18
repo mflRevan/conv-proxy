@@ -28,10 +28,13 @@
   }
 </script>
 
-<section class="agent-monitor">
+<section class="agent-monitor" style={`--pulse-token:${$agentPanel.pulseToken}`}>
   <header>
     <h3>Main Agent</h3>
-    <span class="badge" class:busy={$agentPanel.status === 'busy'}>{stateLabel[$agentPanel.status] || $agentPanel.status}</span>
+    <div class="head-right">
+      <span class="bridge" class:on={$agentPanel.bridgeConfigured}>{$agentPanel.bridgeConfigured ? 'linked' : 'mock/offline'}</span>
+      <span class="badge" class:busy={$agentPanel.status === 'busy'}>{stateLabel[$agentPanel.status] || $agentPanel.status}</span>
+    </div>
   </header>
 
   <div class="now-card" class:active={$agentPanel.status === 'busy'}>
@@ -78,6 +81,9 @@
 <style>
   .agent-monitor { height: 100%; display:flex; flex-direction:column; gap:12px; }
   header { display:flex; justify-content:space-between; align-items:center; }
+  .head-right { display:flex; gap:8px; align-items:center; }
+  .bridge { font-size:.66rem; padding:3px 8px; border-radius:999px; border:1px solid rgba(148,163,184,.3); color:#94a3b8; }
+  .bridge.on { color:#86efac; border-color: rgba(74,222,128,.4); background: rgba(20,83,45,.25); }
   h3 { margin:0; font-size:1.02rem; color:#e2e8f0; }
   .badge { font-size:.72rem; padding:5px 10px; border-radius:999px; background:#334155; color:#cbd5e1; }
   .badge.busy { background:#0f766e; color:#99f6e4; }
@@ -109,11 +115,13 @@
   .now-sub { margin-top:4px; font-size:.82rem; color:#93c5fd; }
 
   .tool-strip { display:flex; flex-wrap:wrap; gap:6px; min-height:28px; }
-  .tool-pill { display:flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid rgba(59,130,246,.25); border-radius:999px; font-size:.72rem; color:#bfdbfe; background:rgba(30,41,59,.6); animation: toolIn .25s ease; }
+  .tool-pill { display:flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid rgba(59,130,246,.25); border-radius:999px; font-size:.72rem; color:#bfdbfe; background:rgba(30,41,59,.6); animation: toolIn .25s ease; transition: transform .2s ease, box-shadow .2s ease; }
+  .tool-pill:hover { transform: translateY(-1px); box-shadow: 0 6px 14px rgba(56,189,248,.16); }
   .dot { width:6px; height:6px; border-radius:50%; background:#38bdf8; box-shadow:0 0 10px #38bdf8; }
   @keyframes toolIn { from {opacity:0; transform: translateY(4px);} to {opacity:1; transform: translateY(0);} }
 
-  .queue-card { border:1px solid rgba(125,211,252,.35); background:rgba(8,47,73,.5); border-radius:10px; padding:10px; }
+  .queue-card { border:1px solid rgba(251,191,36,.4); background:linear-gradient(180deg, rgba(69,26,3,.36), rgba(8,47,73,.5)); border-radius:12px; padding:10px; animation: queuePulse 1.2s ease-in-out infinite alternate; }
+  @keyframes queuePulse { from { box-shadow: inset 0 0 0 rgba(251,191,36,0);} to { box-shadow: inset 0 0 24px rgba(251,191,36,.08);} }
   .queue-title { font-size:.74rem; color:#bae6fd; }
   .queue-task { font-size:.77rem; color:#e2e8f0; margin-top:4px; white-space:pre-wrap; }
   .countdown { margin-top:6px; font-size:.74rem; color:#fde68a; }
