@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENGINE_TYPE="audio"
+ENGINE_TYPE="${ENGINE_TYPE:-thinking}"
+STT_BACKEND="${STT_BACKEND:-whisper-tiny}"
+WEB_PORT="${PORT:-37374}"
+LFM_PORT="${LFM_PORT:-8090}"
 MODEL_DIR="models/lfm-audio"
 RUNNER="runners/llama-liquid-audio-ubuntu-x64/llama-liquid-audio-server"
-PORT=8090
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -13,7 +15,11 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --port)
-      PORT="$2"
+      WEB_PORT="$2"
+      shift 2
+      ;;
+    --stt)
+      STT_BACKEND="$2"
       shift 2
       ;;
     *)
@@ -39,14 +45,14 @@ if [[ "$ENGINE_TYPE" == "audio" ]]; then
     -mm "$MODEL_DIR/mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf" \
     -mv "$MODEL_DIR/vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf" \
     --tts-speaker-file "$MODEL_DIR/tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf" \
-    --port "$PORT" \
+    --port "$LFM_PORT" \
     > lfm_server.log 2>&1 &
 
   SERVER_PID=$!
 
   echo "Starting LFM server (pid $SERVER_PID)..."
 
-  until curl -s "http://127.0.0.1:${PORT}/v1/models" >/dev/null; do
+  until curl -s "http://127.0.0.1:${LFM_PORT}/v1/models" >/dev/null; do
     sleep 1
     echo "Waiting for LFM server..."
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
@@ -58,4 +64,4 @@ if [[ "$ENGINE_TYPE" == "audio" ]]; then
   echo "LFM server ready. Starting webapp..."
 fi
 
-ENGINE_TYPE="$ENGINE_TYPE" uvicorn webapp.app:app --host 0.0.0.0 --port 8000
+ENGINE_TYPE="$ENGINE_TYPE" STT_BACKEND="$STT_BACKEND" PYTHONPATH=. uvicorn webapp.app:app --host 0.0.0.0 --port "$WEB_PORT"

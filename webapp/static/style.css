@@ -20,6 +20,7 @@ header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   border-bottom: 1px solid #1b2633;
   background: #0f1720;
 }
@@ -29,6 +30,28 @@ header {
   letter-spacing: 0.12em;
   font-size: 0.9rem;
   color: #7dd3fc;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.control-group select {
+  background: #0b0f14;
+  color: #e6edf3;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 4px 8px;
 }
 
 .status {
@@ -60,6 +83,7 @@ header {
   line-height: 1.4;
   font-size: 0.95rem;
   white-space: pre-wrap;
+  position: relative;
 }
 
 .message.user {
@@ -74,12 +98,20 @@ header {
   border: 1px solid #1f2937;
 }
 
+.message .latency {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.7rem;
+  color: #94a3b8;
+}
+
 footer {
   display: flex;
   gap: 10px;
   padding: 16px 20px;
   border-top: 1px solid #1b2633;
   background: #0f1720;
+  align-items: center;
 }
 
 footer input[type="text"] {
@@ -101,6 +133,43 @@ footer button {
   cursor: pointer;
 }
 
+.mic {
+  background: #0b0f14;
+  color: #e6edf3;
+  border: 1px solid #1f2937;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+}
+
+.mic.active {
+  border-color: #f87171;
+  color: #f87171;
+}
+
+.recording-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #1f2937;
+  box-shadow: 0 0 0 rgba(248, 113, 113, 0.7);
+  opacity: 0.6;
+}
+
+.recording-indicator.active {
+  background: #f87171;
+  animation: pulse 1.2s infinite;
+  opacity: 1;
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(248, 113, 113, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
+}
+
 .toggle {
   display: flex;
   align-items: center;
@@ -111,5 +180,8 @@ footer button {
 
 @media (max-width: 600px) {
   .message { max-width: 90%; }
-  footer { flex-direction: column; }
+  header { flex-direction: column; align-items: flex-start; }
+  .controls { width: 100%; justify-content: space-between; flex-wrap: wrap; }
+  footer { flex-wrap: wrap; }
+  footer input[type="text"] { flex: 1 1 100%; }
 }

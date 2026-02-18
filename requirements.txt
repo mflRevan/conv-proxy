@@ -11,3 +11,5 @@ fastapi
 uvicorn
 websockets
 llama-cpp-python
+useful-moonshine-onnx
+moonshine

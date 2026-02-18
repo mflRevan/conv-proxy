@@ -10,16 +10,24 @@
   <div class="app">
     <header>
       <div class="brand">JARVIS // CONV-PROXY</div>
-      <div id="status" class="status">offline</div>
+      <div class="controls">
+        <div class="control-group">
+          <label for="sttSelect">STT</label>
+          <select id="sttSelect"></select>
+        </div>
+        <label class="toggle">
+          <input id="ttsToggle" type="checkbox" />
+          <span>TTS</span>
+        </label>
+        <div id="status" class="status">offline</div>
+      </div>
     </header>
 
     <main id="chat" class="chat"></main>
 
     <footer>
-      <label class="toggle">
-        <input id="ttsToggle" type="checkbox" />
-        <span>TTS</span>
-      </label>
+      <div id="recordingIndicator" class="recording-indicator" title="Recording"></div>
+      <button id="mic" class="mic">🎙️</button>
       <input id="input" type="text" placeholder="Ask Jarvis..." />
       <button id="send">Send</button>
     </footer>
