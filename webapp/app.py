@@ -316,6 +316,226 @@ async def chat_ws(ws: WebSocket) -> None:
         _cancel_events.pop(conn_id, None)
 
 
+# ─── Real-time Voice WebSocket ───
+
+from voice.pipeline import VoicePipeline, PipelineState, VADConfig
+
+@app.websocket("/ws/voice")
+async def voice_ws(ws: WebSocket) -> None:
+    """
+    Real-time voice conversation WebSocket.
+    
+    Client sends:
+      - {"type": "audio_chunk", "data": "<base64_pcm16>", "sample_rate": 16000}
+      - {"type": "cancel"}  — interrupt current response
+      - {"type": "config", "vad": {...}, "stt_backend": "...", "tts": true/false}
+      - {"type": "text", "message": "..."} — text fallback input
+    
+    Server sends:
+      - {"type": "state", "state": "idle|listening|processing|speaking"}
+      - {"type": "vad", "event": "speech_start|speech_end|barge_in"}
+      - {"type": "transcription", "text": "...", "final": true/false}
+      - {"type": "text", "content": "..."} — streaming LLM tokens
+      - {"type": "action", "action": "task|stop", ...}
+      - {"type": "reasoning", "content": "..."}
+      - {"type": "audio", "content": "<base64_pcm16>", "sample_rate": 24000}
+      - {"type": "done", "task_draft": "...", "agent_status": "..."}
+      - {"type": "cancelled"}
+      - {"type": "error", "message": "..."}
+    """
+    await ws.accept()
+    
+    pipeline = VoicePipeline(stt_backend=DEFAULT_STT_BACKEND, tts_engine=_tts)
+    want_tts = True
+    loop = asyncio.get_event_loop()
+    
+    async def send(msg: dict):
+        try:
+            await ws.send_text(json.dumps(msg))
+        except Exception:
+            pass
+
+    # Wire pipeline callbacks
+    def on_state(s: PipelineState):
+        asyncio.run_coroutine_threadsafe(send({"type": "state", "state": s.name.lower()}), loop)
+    
+    def on_vad(event: str):
+        asyncio.run_coroutine_threadsafe(send({"type": "vad", "event": event}), loop)
+    
+    pipeline.on_state_change = on_state
+    pipeline.on_vad_event = on_vad
+
+    await send({
+        "type": "status", "status": "connected",
+        "model": _engine.model,
+        "agent_status": _proxy.state.agent_status,
+        "stt_backend": pipeline.stt_backend,
+        "vad_config": {
+            "energy_threshold": pipeline.vad_config.energy_threshold,
+            "silence_duration_ms": pipeline.vad_config.silence_duration_ms,
+            "min_speech_ms": pipeline.vad_config.min_speech_ms,
+        },
+    })
+
+    async def run_response(text: str):
+        """Full LLM → TTS response pipeline with cancellation."""
+        cancel_event = pipeline.start_response()
+        pipeline._set_state(PipelineState.PROCESSING)
+        
+        # Stream LLM
+        q: asyncio.Queue = asyncio.Queue()
+        
+        def _stream():
+            try:
+                for delta in _proxy.process_message_stream(text, cancel_event=cancel_event):
+                    if cancel_event.is_set():
+                        loop.call_soon_threadsafe(q.put_nowait, ("cancelled", None))
+                        return
+                    loop.call_soon_threadsafe(q.put_nowait, (delta["type"], delta))
+            except Exception as e:
+                loop.call_soon_threadsafe(q.put_nowait, ("error", {"message": str(e)}))
+            finally:
+                loop.call_soon_threadsafe(q.put_nowait, ("_end", None))
+        
+        loop.run_in_executor(_pool, _stream)
+        
+        response_text = ""
+        was_cancelled = False
+        
+        while True:
+            evt_type, evt_data = await q.get()
+            
+            if evt_type == "_end":
+                break
+            if evt_type == "cancelled":
+                await send({"type": "cancelled"})
+                was_cancelled = True
+                break
+            if evt_type == "error":
+                await send({"type": "error", "message": evt_data.get("message", "")})
+                break
+            if evt_type == "content":
+                response_text += evt_data["text"]
+                await send({"type": "text", "content": evt_data["text"]})
+            elif evt_type == "reasoning":
+                await send({"type": "reasoning", "content": evt_data["text"]})
+            elif evt_type == "action":
+                await send({
+                    "type": "action",
+                    "action": evt_data.get("action", ""),
+                    "task": evt_data.get("task", ""),
+                    "task_draft": _proxy.state.queued_task,
+                })
+            elif evt_type == "done":
+                pass
+        
+        # TTS
+        if want_tts and response_text and not was_cancelled and not cancel_event.is_set():
+            pipeline.begin_speaking()
+            
+            def _do_tts():
+                chunks = []
+                for b64, sr, is_first in pipeline.synthesize_streaming(response_text):
+                    if cancel_event.is_set():
+                        return chunks, True
+                    chunks.append((b64, sr, is_first))
+                return chunks, False
+            
+            tts_chunks, tts_cancelled = await loop.run_in_executor(_pool, _do_tts)
+            
+            for b64, sr, is_first in tts_chunks:
+                if cancel_event.is_set():
+                    break
+                await send({
+                    "type": "audio", "content": b64,
+                    "sample_rate": sr, "format": "pcm16",
+                    "first": is_first,
+                })
+        
+        # Done
+        if not was_cancelled:
+            await send({
+                "type": "done",
+                "agent_status": _proxy.state.agent_status,
+                "task_draft": _proxy.state.queued_task,
+            })
+        
+        pipeline.finish_response()
+
+    try:
+        while True:
+            raw = await ws.receive_text()
+            payload = json.loads(raw)
+            msg_type = payload.get("type", "")
+
+            # ─── Audio chunk (real-time VAD) ───
+            if msg_type == "audio_chunk":
+                b64 = payload.get("data", "")
+                if not b64:
+                    continue
+                pcm_bytes = base64.b64decode(b64)
+                pcm16 = np.frombuffer(pcm_bytes, dtype=np.int16)
+                audio_f32 = pcm16.astype(np.float32) / 32768.0
+                
+                vad_result = pipeline.process_audio_chunk(audio_f32)
+                
+                if vad_result == "speech_end":
+                    # Transcribe and process
+                    text = await loop.run_in_executor(
+                        _pool, pipeline.transcribe_buffer
+                    )
+                    if text:
+                        await send({"type": "transcription", "text": text, "final": True})
+                        await run_response(text)
+                    else:
+                        pipeline.finish_response()
+                
+                elif vad_result == "barge_in":
+                    await send({"type": "cancelled"})
+                    # Pipeline already cancelled output and switched to LISTENING
+
+            # ─── Cancel ───
+            elif msg_type == "cancel":
+                pipeline.cancel_output()
+                await send({"type": "cancelled"})
+
+            # ─── Text fallback ───
+            elif msg_type == "text":
+                text = payload.get("message", "").strip()
+                if text:
+                    await run_response(text)
+
+            # ─── Config update ───
+            elif msg_type == "config":
+                if "stt_backend" in payload:
+                    pipeline.stt_backend = payload["stt_backend"]
+                if "tts" in payload:
+                    want_tts = bool(payload["tts"])
+                if "vad" in payload:
+                    vad = payload["vad"]
+                    if "energy_threshold" in vad:
+                        pipeline.vad_config.energy_threshold = float(vad["energy_threshold"])
+                    if "silence_duration_ms" in vad:
+                        pipeline.vad_config.silence_duration_ms = int(vad["silence_duration_ms"])
+                    if "min_speech_ms" in vad:
+                        pipeline.vad_config.min_speech_ms = int(vad["min_speech_ms"])
+                await send({
+                    "type": "config_updated",
+                    "stt_backend": pipeline.stt_backend,
+                    "tts": want_tts,
+                    "vad_config": {
+                        "energy_threshold": pipeline.vad_config.energy_threshold,
+                        "silence_duration_ms": pipeline.vad_config.silence_duration_ms,
+                        "min_speech_ms": pipeline.vad_config.min_speech_ms,
+                    },
+                })
+
+    except WebSocketDisconnect:
+        pass
+    finally:
+        pipeline.reset()
+
+
 # ─── Dispatch timer (background task) ───
 async def _dispatch_loop():
     """Periodically check if queued task should be dispatched."""
