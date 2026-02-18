@@ -10,3 +10,4 @@ openai
 fastapi
 uvicorn
 websockets
+llama-cpp-python

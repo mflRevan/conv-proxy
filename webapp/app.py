@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import sys
 from pathlib import Path
 from typing import List
 
@@ -10,7 +12,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from llm.lfm_engine import LFMAudioEngine
+from llm.engine import create_engine
 from tts.kokoro_streaming import KokoroStreamingTTS
 
 ROOT = Path(__file__).resolve().parent
@@ -19,7 +21,20 @@ STATIC_DIR = ROOT / "static"
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-engine = LFMAudioEngine()
+
+def resolve_engine_type() -> str:
+    env_choice = os.getenv("ENGINE_TYPE")
+    if env_choice:
+        return env_choice
+    if "--engine" in sys.argv:
+        idx = sys.argv.index("--engine")
+        if idx + 1 < len(sys.argv):
+            return sys.argv[idx + 1]
+    return "audio"
+
+
+engine_type = resolve_engine_type()
+engine = create_engine(engine_type=engine_type)
 tts_engine = KokoroStreamingTTS()
 
 

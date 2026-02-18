@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import time
-from typing import Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 import numpy as np
 
-from llm.lfm_engine import LFMAudioEngine
+from llm.engine import create_engine
 from tts.kokoro_streaming import KokoroStreamingTTS
 
 
@@ -16,13 +16,14 @@ class ConversationalProxy:
     def __init__(
         self,
         max_tokens: int = 2048,
-        engine: Optional[LFMAudioEngine] = None,
+        engine_type: str = "audio",
+        engine: Optional[Any] = None,
         tts: Optional[KokoroStreamingTTS] = None,
     ) -> None:
         self.max_tokens = max_tokens
         self.history: List[Dict] = []
         self.last_interaction: Optional[float] = None
-        self.engine = engine or LFMAudioEngine()
+        self.engine = engine or create_engine(engine_type=engine_type)
         self.tts = tts or KokoroStreamingTTS()
         self.system_prompt = self._load_system_prompt()
         if self.system_prompt:
