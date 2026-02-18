@@ -21,7 +21,7 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Any
 
 import numpy as np
 import soundfile as sf
@@ -65,6 +65,9 @@ _proxy = ProxyController(
 _cancel_events: dict[int, threading.Event] = {}
 _chat_clients: set[WebSocket] = set()
 _voice_clients: set[WebSocket] = set()
+
+
+_mock_task: asyncio.Task | None = None
 
 
 async def _broadcast(msg: dict):
@@ -141,6 +144,51 @@ async def update_agent_context(body: dict) -> JSONResponse:
 @app.get("/api/stt/backends")
 def stt_backends() -> JSONResponse:
     return JSONResponse({"backends": list_available(), "default": DEFAULT_STT_BACKEND})
+
+
+async def _run_mock_agent_flow():
+    stages: list[dict[str, Any]] = [
+        {"state": "analyzing", "progress": 8, "title": "Parsing task", "content": "- Inspecting requirements\n- Building execution plan"},
+        {"state": "running", "progress": 24, "title": "Implementing", "content": "```bash\npytest tests/test_proxy_tools.py -q\n```"},
+        {"state": "running", "progress": 42, "title": "Intermediate result", "content": "```json\n{\n  \"tool_calls\": 3,\n  \"latency_ms\": 1260\n}\n```"},
+        {"state": "running", "progress": 60, "title": "Refining edge cases", "content": "- handling queue/dequeue race\n- validating cancellation semantics"},
+        {"state": "running", "progress": 78, "title": "Validation", "content": "All unit checks passed. Preparing final brief."},
+        {"state": "done", "progress": 100, "title": "Completed", "content": "✅ Proxy queue semantics implemented and verified."},
+    ]
+
+    _proxy.update_agent_context(status="busy", current_task="Mock flow: implementing queue semantics")
+    await _broadcast({"type": "agent_status", "status": "busy", "current_task": _proxy.state.agent_current_task})
+
+    for stage in stages:
+        await _broadcast({"type": "agent_progress", **stage})
+        await asyncio.sleep(2.0)
+
+    brief = "Main agent finished mock run: queue/dequeue logic implemented, tests green."
+    _proxy.update_agent_context(status="idle", current_task="", just_finished=True, completion_brief=brief)
+    await _broadcast({"type": "agent_status", "status": "idle", "current_task": ""})
+    await _broadcast({"type": "agent_brief", "content": brief})
+
+
+@app.post("/api/mock-agent/start")
+async def mock_agent_start() -> JSONResponse:
+    global _mock_task
+    if _mock_task and not _mock_task.done():
+        return JSONResponse({"ok": False, "error": "mock flow already running"}, status_code=409)
+    _mock_task = asyncio.create_task(_run_mock_agent_flow())
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/mock-agent/stop")
+async def mock_agent_stop() -> JSONResponse:
+    global _mock_task
+    if _mock_task and not _mock_task.done():
+        _mock_task.cancel()
+        _mock_task = None
+    _proxy.update_agent_context(status="idle", current_task="")
+    _proxy.state.must_brief_before_dispatch = False
+    _proxy.state.pending_completion_brief = ""
+    await _broadcast({"type": "agent_status", "status": "idle", "current_task": ""})
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/stt/transcribe")
@@ -304,6 +352,11 @@ async def chat_ws(ws: WebSocket) -> None:
                         "task_draft": _proxy.state.scratchpad_task,
                         "queued_task": _proxy.state.queued_task,
                     }))
+                    await _broadcast({
+                        "type": "tool_called",
+                        "tool": evt_data.get("action", ""),
+                        "task": evt_data.get("task", ""),
+                    })
 
                 elif evt_type == "done":
                     pass  # handled below
@@ -461,6 +514,11 @@ async def voice_ws(ws: WebSocket) -> None:
                     "task_draft": _proxy.state.scratchpad_task,
                     "queued_task": _proxy.state.queued_task,
                 })
+                await _broadcast({
+                    "type": "tool_called",
+                    "tool": evt_data.get("action", ""),
+                    "task": evt_data.get("task", ""),
+                })
             elif evt_type == "done":
                 pass
         
@@ -544,7 +602,9 @@ async def voice_ws(ws: WebSocket) -> None:
             # ─── Config update ───
             elif msg_type == "config":
                 if "stt_backend" in payload:
-                    pipeline.stt_backend = payload["stt_backend"]
+                    requested = payload["stt_backend"]
+                    if requested in list_available():
+                        pipeline.stt_backend = requested
                 if "tts" in payload:
                     want_tts = bool(payload["tts"])
                 if "vad" in payload:

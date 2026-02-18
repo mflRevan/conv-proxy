@@ -3,8 +3,8 @@
 
   const sttBackends = [
     'moonshine-tiny',
+    'moonshine-base',
     'whisper-tiny',
-    'whisper-base',
     'whisper-small',
     'whisper-medium',
   ];

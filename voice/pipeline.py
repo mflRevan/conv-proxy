@@ -162,11 +162,16 @@ class VoicePipeline:
         audio = self.get_audio_buffer()
         if audio.size == 0:
             return ""
-        
-        stt = create_stt(self.stt_backend)
-        result = stt.transcribe(audio, sample_rate=self.vad_config.sample_rate)
-        self._audio_buffer.clear()
-        return result.text.strip()
+
+        try:
+            stt = create_stt(self.stt_backend)
+            result = stt.transcribe(audio, sample_rate=self.vad_config.sample_rate)
+            return result.text.strip()
+        except Exception as e:
+            log.exception("STT transcription failed: %s", e)
+            return ""
+        finally:
+            self._audio_buffer.clear()
 
     def start_response(self) -> threading.Event:
         """Mark pipeline as processing/speaking. Returns cancel event."""

@@ -3,6 +3,7 @@ import { conversation, generateMessageId } from '../stores/conversation';
 import { audio } from '../stores/audio';
 import { get } from 'svelte/store';
 import { audioPlayer } from './audioPlayer';
+import { agentPanel, nextAgentId } from '../stores/agent';
 
 const WS_URL = `ws://${window.location.host}/ws/voice`;
 const BASE_RECONNECT_DELAY = 800;
@@ -11,6 +12,29 @@ const MAX_RECONNECT_ATTEMPTS = 12;
 
 let ws: WebSocket | null = null;
 let reconnectTimeout: number | null = null;
+let dispatchTimer: number | null = null;
+
+function clearDispatchCountdown() {
+  if (dispatchTimer) {
+    clearInterval(dispatchTimer);
+    dispatchTimer = null;
+  }
+  agentPanel.update(s => ({ ...s, dispatchCountdown: null }));
+}
+
+function startDispatchCountdown(seconds = 10) {
+  clearDispatchCountdown();
+  let remaining = seconds;
+  agentPanel.update(s => ({ ...s, dispatchCountdown: remaining }));
+  dispatchTimer = window.setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      clearDispatchCountdown();
+      return;
+    }
+    agentPanel.update(s => ({ ...s, dispatchCountdown: remaining }));
+  }, 1000);
+}
 
 function reconnectDelayMs(attempt: number): number {
   const exp = Math.min(MAX_RECONNECT_DELAY, BASE_RECONNECT_DELAY * Math.pow(2, attempt));
@@ -64,6 +88,7 @@ export function connect() {
       }));
 
       audioPlayer.stop();
+      clearDispatchCountdown();
 
       const s = get(connection);
       if (s.reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
@@ -96,6 +121,11 @@ function handleMessage(msg: any) {
       if (msg.task_draft !== undefined) {
         conversation.update(state => ({ ...state, taskDraft: msg.task_draft || '' }));
       }
+      agentPanel.update(s => ({
+        ...s,
+        status: msg.agent_status || s.status,
+        queuedTask: msg.queued_task || s.queuedTask,
+      }));
       break;
 
     case 'state':
@@ -156,10 +186,60 @@ function handleMessage(msg: any) {
         ...state,
         taskDraft: msg.task_draft ?? state.taskDraft,
       }));
+      agentPanel.update(s => ({
+        ...s,
+        queuedTask: msg.queued_task ?? s.queuedTask,
+      }));
+      if (msg.action === 'queued' && msg.queued_task) {
+        startDispatchCountdown(10);
+      } else if (msg.action === 'buffer' || msg.action === 'buffer_cleared' || msg.action === 'stop') {
+        clearDispatchCountdown();
+      }
       break;
 
     case 'audio':
       audioPlayer.playChunk(msg.content, msg.sample_rate || 24000);
+      break;
+
+    case 'agent_status':
+      agentPanel.update(s => ({
+        ...s,
+        status: msg.status || s.status,
+        currentTask: msg.current_task || '',
+      }));
+      if (msg.status === 'busy') clearDispatchCountdown();
+      break;
+
+    case 'agent_progress':
+      agentPanel.update(s => ({
+        ...s,
+        progressFeed: [
+          ...s.progressFeed,
+          {
+            id: nextAgentId('progress'),
+            state: msg.state || 'running',
+            progress: Number(msg.progress || 0),
+            title: msg.title || 'Update',
+            content: msg.content || '',
+            timestamp: Date.now(),
+          },
+        ].slice(-20),
+      }));
+      break;
+
+    case 'tool_called':
+      agentPanel.update(s => ({
+        ...s,
+        toolEvents: [
+          {
+            id: nextAgentId('tool'),
+            tool: msg.tool || 'unknown',
+            task: msg.task || '',
+            timestamp: Date.now(),
+          },
+          ...s.toolEvents,
+        ].slice(0, 12),
+      }));
       break;
 
     case 'agent_brief':
@@ -177,10 +257,12 @@ function handleMessage(msg: any) {
           ],
         }));
       }
+      clearDispatchCountdown();
       break;
 
     case 'dispatch_ready':
-      // informational marker for UI; actual OpenClaw dispatch bridge is external
+      clearDispatchCountdown();
+      agentPanel.update(s => ({ ...s, queuedTask: msg.task || s.queuedTask }));
       break;
 
     case 'done': {
@@ -209,6 +291,16 @@ function handleMessage(msg: any) {
         ...state,
         agentStatus: msg.agent_status || state.agentStatus,
       }));
+      agentPanel.update(s => ({
+        ...s,
+        status: msg.agent_status || s.status,
+        queuedTask: msg.queued_task ?? s.queuedTask,
+      }));
+      if (msg.queued_task && msg.agent_status === 'idle') {
+        startDispatchCountdown(10);
+      } else if (!msg.queued_task || msg.agent_status === 'busy') {
+        clearDispatchCountdown();
+      }
       break;
     }
 
@@ -285,4 +377,5 @@ export function disconnect() {
     clearTimeout(reconnectTimeout);
     reconnectTimeout = null;
   }
+  clearDispatchCountdown();
 }

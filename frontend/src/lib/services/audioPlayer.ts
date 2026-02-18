@@ -15,6 +15,10 @@ class AudioPlayer {
   async playChunk(base64Data: string, sampleRate: number) {
     if (!this.audioContext) return;
 
+    if (this.audioContext.state === 'suspended') {
+      try { await this.audioContext.resume(); } catch {}
+    }
+
     audio.update(state => ({ ...state, speakerState: 'speaking' }));
 
     try {
