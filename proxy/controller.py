@@ -177,7 +177,24 @@ class ProxyController:
                     if self.on_task_updated:
                         self.on_task_updated(task_text)
 
-        self.conversation.append({"role": "assistant", "content": reply})
+        # Add assistant message (with tool calls) + tool responses to conversation
+        assistant_msg = {"role": "assistant", "content": reply}
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        self.conversation.append(assistant_msg)
+
+        # Add tool responses so the model knows the outcome
+        for tc in tool_calls:
+            tc_id = tc.get("id", "")
+            fn_name = tc["function"]["name"]
+            tool_result = {"status": "ok"}
+            if fn_name == "set_queued_task":
+                tool_result["queued_task"] = self.state.queued_task[:100]
+            self.conversation.append({
+                "role": "tool",
+                "tool_call_id": tc_id,
+                "content": json.dumps(tool_result),
+            })
         self._trim_history()
 
         return {
