@@ -22,6 +22,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional, Any
+import subprocess
 
 import numpy as np
 import soundfile as sf
@@ -69,6 +70,11 @@ _voice_clients: set[WebSocket] = set()
 
 _mock_task: asyncio.Task | None = None
 
+# OpenClaw bridge target session (session-id based)
+_bridge_session_id: str = os.getenv("OPENCLAW_BRIDGE_SESSION_ID", "").strip()
+_bridge_last_result: str = ""
+_bridge_last_error: str = ""
+
 
 async def _broadcast(msg: dict):
     payload = json.dumps(msg)
@@ -98,6 +104,54 @@ def decode_wav_bytes(payload: bytes) -> tuple[np.ndarray, int]:
     return audio, sr
 
 
+async def _dispatch_to_openclaw_session(task_text: str) -> tuple[bool, str]:
+    """Send task text into an existing OpenClaw session via CLI gateway path."""
+    global _bridge_last_error, _bridge_last_result
+
+    if not _bridge_session_id:
+        return False, "bridge session not configured"
+
+    cmd = [
+        "openclaw", "agent",
+        "--session-id", _bridge_session_id,
+        "--message", task_text,
+        "--json",
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await proc.communicate()
+
+        if proc.returncode != 0:
+            msg = (err.decode("utf-8", errors="ignore") or out.decode("utf-8", errors="ignore")).strip()
+            _bridge_last_error = msg[:1200]
+            return False, _bridge_last_error
+
+        raw = out.decode("utf-8", errors="ignore").strip()
+        reply_text = ""
+        try:
+            payload = json.loads(raw)
+            reply_text = (
+                payload.get("reply")
+                or payload.get("text")
+                or ((payload.get("result") or {}).get("payloads") or [{}])[0].get("text", "")
+            ).strip()
+        except Exception:
+            reply_text = raw
+
+        _bridge_last_result = reply_text[:1200]
+        _bridge_last_error = ""
+        return True, _bridge_last_result
+
+    except Exception as e:
+        _bridge_last_error = str(e)
+        return False, _bridge_last_error
+
+
 # ─── Routes ───
 
 @app.get("/")
@@ -120,6 +174,27 @@ def api_status() -> JSONResponse:
         "must_brief_before_dispatch": _proxy.state.must_brief_before_dispatch,
         "conversation_length": len(_proxy.conversation),
     })
+
+
+@app.get("/api/bridge/status")
+def bridge_status() -> JSONResponse:
+    return JSONResponse({
+        "session_id": _bridge_session_id,
+        "configured": bool(_bridge_session_id),
+        "last_result": _bridge_last_result,
+        "last_error": _bridge_last_error,
+    })
+
+
+@app.post("/api/bridge/bind")
+async def bridge_bind(body: dict) -> JSONResponse:
+    global _bridge_session_id, _bridge_last_error, _bridge_last_result
+    sid = str(body.get("session_id", "")).strip()
+    _bridge_session_id = sid
+    _bridge_last_error = ""
+    _bridge_last_result = ""
+    await _broadcast({"type": "bridge_status", "configured": bool(_bridge_session_id), "session_id": _bridge_session_id})
+    return JSONResponse({"ok": True, "session_id": _bridge_session_id, "configured": bool(_bridge_session_id)})
 
 
 @app.post("/api/agent-context")
@@ -639,11 +714,25 @@ async def _dispatch_loop():
     while True:
         await asyncio.sleep(2)
         task = _proxy.check_dispatch()
-        if task:
-            # Integration hook: external OpenClaw bridge should consume this event and
-            # send task to main session (sessions_send). For now, broadcast and log.
-            print(f"[DISPATCH] Ready for main agent: {task[:120]}")
-            await _broadcast({"type": "dispatch_ready", "task": task})
+        if not task:
+            continue
+
+        await _broadcast({"type": "dispatch_ready", "task": task})
+
+        # Optional direct bridge: dispatch into a bound OpenClaw session.
+        if _bridge_session_id:
+            _proxy.update_agent_context(status="busy", current_task="Dispatching queued task to OpenClaw session")
+            await _broadcast({"type": "agent_status", "status": "busy", "current_task": _proxy.state.agent_current_task})
+            ok, result = await _dispatch_to_openclaw_session(task)
+            if ok:
+                brief = result or "Task dispatched to bound session."
+                _proxy.update_agent_context(status="idle", current_task="", just_finished=True, completion_brief=brief)
+                await _broadcast({"type": "agent_status", "status": "idle", "current_task": ""})
+                await _broadcast({"type": "agent_brief", "content": brief})
+            else:
+                _proxy.update_agent_context(status="idle", current_task="")
+                await _broadcast({"type": "agent_status", "status": "idle", "current_task": ""})
+                await _broadcast({"type": "agent_progress", "state": "error", "title": "Bridge dispatch failed", "content": result})
 
 
 @app.on_event("startup")

@@ -18,21 +18,32 @@
 <main class="app">
   <StatusBar />
 
-  <section class="stage">
-    <div class="response-wrap">
-      <ResponseDisplay />
-    </div>
+  <section class="hud">
+    <section class="left-stage">
+      <div class="chat-shell">
+        <ResponseDisplay />
+      </div>
 
-    <div class="voice-controls">
-      <AudioVisualizer />
-      <VoiceButton />
+      <div class="dock">
+        <VoiceButton />
+        <div class="viz-wrap">
+          <AudioVisualizer />
+        </div>
+      </div>
+
       <div class="caption-slot">
         <TranscriptionDisplay />
       </div>
-    </div>
+    </section>
 
-    <aside class="floating left"><TaskDraft /></aside>
-    <aside class="floating right"><AgentMonitor /></aside>
+    <section class="right-stage">
+      <div class="hero scratchpad-hero">
+        <TaskDraft />
+      </div>
+      <div class="hero agent-hero">
+        <AgentMonitor />
+      </div>
+    </section>
   </section>
 
   <SettingsPanel />
@@ -42,81 +53,109 @@
   :global(body) {
     margin: 0;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-    background: radial-gradient(1100px 600px at 50% 100%, rgba(56, 189, 248, 0.08), transparent 60%),
-      linear-gradient(135deg, #0f172a 0%, #111827 100%);
+    background:
+      radial-gradient(900px 500px at 20% 75%, rgba(59,130,246,.11), transparent 70%),
+      radial-gradient(800px 450px at 80% 18%, rgba(34,211,238,.09), transparent 68%),
+      linear-gradient(135deg, #0b1020 0%, #111827 100%);
     color: #e2e8f0;
     overflow: hidden;
   }
   :global(*) { box-sizing: border-box; }
 
-  .app { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+  .app { display:flex; flex-direction:column; height:100vh; width:100vw; }
 
-  .stage {
-    position: relative;
+  .hud {
     flex: 1;
     min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(380px, 42vw);
+    gap: 14px;
     padding: 12px;
-    display: flex;
-    flex-direction: column;
+  }
+
+  .left-stage {
+    min-height: 0;
+    display: grid;
+    grid-template-rows: minmax(0,1fr) auto auto;
     gap: 10px;
   }
 
-  .response-wrap {
-    flex: 1;
+  .chat-shell {
     min-height: 0;
-    background: rgba(15, 23, 42, 0.45);
-    border: 1px solid rgba(59, 130, 246, 0.18);
-    border-radius: 16px;
+    border-radius: 18px;
+    border: 1px solid rgba(96,165,250,.22);
+    background: linear-gradient(180deg, rgba(15,23,42,.56), rgba(2,6,23,.5));
+    box-shadow: inset 0 1px 0 rgba(148,163,184,.08), 0 22px 46px rgba(2,6,23,.42);
     overflow: hidden;
   }
 
-  .voice-controls {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    padding: 14px;
+  .dock {
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap: 18px;
+    padding: 10px 14px;
     border-radius: 14px;
-    border: 1px solid rgba(59, 130, 246, 0.18);
-    background: linear-gradient(to top, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.55));
-    min-height: 240px;
+    border: 1px solid rgba(59,130,246,.2);
+    background: linear-gradient(180deg, rgba(15,23,42,.68), rgba(15,23,42,.45));
+  }
+
+  .viz-wrap {
+    width: min(540px, 72%);
+    border-radius: 999px;
+    border: 1px solid rgba(125,211,252,.28);
+    background: rgba(15,23,42,.56);
+    padding: 7px 14px;
   }
 
   .caption-slot {
-    width: min(680px, 100%);
-    min-height: 66px;
-    display: flex;
-    align-items: center;
+    min-height: 70px;
+    display:flex;
+    align-items:center;
   }
 
-  .floating {
-    position: absolute;
-    top: 88px;
-    width: min(320px, 28vw);
-    height: min(64vh, 620px);
-    border-radius: 16px;
-    border: 1px solid rgba(125, 211, 252, 0.28);
-    background: linear-gradient(180deg, rgba(15, 23, 42, 0.7), rgba(15, 23, 42, 0.52));
-    backdrop-filter: blur(11px);
-    box-shadow: 0 14px 50px rgba(2, 8, 23, 0.45);
-    padding: 12px;
+  .right-stage {
+    min-height: 0;
+    display:grid;
+    grid-template-rows: minmax(190px, 44%) minmax(220px, 56%);
+    gap: 12px;
+  }
+
+  .hero {
+    border: 1px solid rgba(125,211,252,.36);
+    background: linear-gradient(180deg, rgba(8,47,73,.34), rgba(15,23,42,.64));
+    border-radius: 30px 22px 28px 20px;
+    box-shadow: 0 16px 45px rgba(2,8,23,.55), inset 0 0 0 1px rgba(186,230,253,.08);
+    padding: 14px;
+    min-height:0;
     overflow: hidden;
-    animation: floatIn .35s ease;
+    position: relative;
   }
 
-  .floating.left { left: 20px; }
-  .floating.right { right: 20px; }
-
-  @keyframes floatIn {
-    from { opacity: 0; transform: translateY(8px) scale(0.98); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
+  .hero::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(145deg, rgba(186,230,253,.08), transparent 34%, transparent 70%, rgba(56,189,248,.06));
   }
 
-  @media (max-width: 1200px) {
-    .floating { width: min(280px, 34vw); }
+  .scratchpad-hero {
+    transform: translateY(2px);
   }
 
-  @media (max-width: 900px) {
-    .floating { display: none; }
+  .agent-hero {
+    border-color: rgba(45,212,191,.4);
+    background: linear-gradient(180deg, rgba(2,44,34,.38), rgba(15,23,42,.67));
+    box-shadow: 0 18px 52px rgba(2,8,23,.58), 0 0 22px rgba(45,212,191,.12);
+  }
+
+  @media (max-width: 1100px) {
+    .hud { grid-template-columns: 1fr; }
+    .right-stage { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+  }
+
+  @media (max-width: 860px) {
+    .right-stage { grid-template-columns: 1fr; }
   }
 </style>

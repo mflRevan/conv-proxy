@@ -25,13 +25,6 @@
     settings.update(s => ({ ...s, showSettings: !s.showSettings }));
   }
 
-  async function startMockFlow() {
-    await fetch('/api/mock-agent/start', { method: 'POST' });
-  }
-
-  async function stopMockFlow() {
-    await fetch('/api/mock-agent/stop', { method: 'POST' });
-  }
 </script>
 
 <div class="status-bar">
@@ -48,8 +41,6 @@
   </div>
 
   <div class="actions">
-    <button class="mock-btn" on:click={startMockFlow}>Mock Start</button>
-    <button class="mock-btn stop" on:click={stopMockFlow}>Mock Stop</button>
     <button class="settings-button" on:click={toggleSettings} aria-label="Settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <circle cx="12" cy="12" r="3"/>
@@ -115,17 +106,6 @@
   }
 
   .actions { display:flex; align-items:center; gap:8px; }
-
-  .mock-btn {
-    border: 1px solid rgba(59,130,246,.35);
-    background: rgba(30,41,59,.6);
-    color: #cbd5e1;
-    font-size: .72rem;
-    padding: 6px 10px;
-    border-radius: 8px;
-    cursor: pointer;
-  }
-  .mock-btn.stop { border-color: rgba(239,68,68,.35); color:#fecaca; }
 
   .settings-button {
     background: none;

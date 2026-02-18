@@ -76,21 +76,21 @@
 </section>
 
 <style>
-  .agent-monitor { height: 100%; display:flex; flex-direction:column; gap:10px; }
+  .agent-monitor { height: 100%; display:flex; flex-direction:column; gap:12px; }
   header { display:flex; justify-content:space-between; align-items:center; }
-  h3 { margin:0; font-size:.95rem; color:#cbd5e1; }
-  .badge { font-size:.68rem; padding:4px 9px; border-radius:999px; background:#334155; color:#cbd5e1; }
+  h3 { margin:0; font-size:1.02rem; color:#e2e8f0; }
+  .badge { font-size:.72rem; padding:5px 10px; border-radius:999px; background:#334155; color:#cbd5e1; }
   .badge.busy { background:#0f766e; color:#99f6e4; }
 
   .now-card {
     position: relative;
-    display:flex; gap:10px; align-items:flex-start;
-    border:1px solid rgba(59,130,246,.25);
-    background: rgba(30,41,59,.5);
-    border-radius: 12px;
-    padding: 10px;
+    display:flex; gap:12px; align-items:flex-start;
+    border:1px solid rgba(56,189,248,.32);
+    background: linear-gradient(180deg, rgba(8,47,73,.42), rgba(30,41,59,.52));
+    border-radius: 15px;
+    padding: 12px;
   }
-  .now-card.active { border-color: rgba(45,212,191,.4); }
+  .now-card.active { border-color: rgba(45,212,191,.48); box-shadow: 0 0 20px rgba(45,212,191,.14); }
   .pulse {
     margin-top:4px;
     width:10px; height:10px; border-radius:50%;
@@ -105,8 +105,8 @@
     100% { box-shadow: 0 0 0 0 rgba(34,211,238,0); }
   }
   .now-label { font-size:.7rem; color:#93c5fd; text-transform:uppercase; letter-spacing:.08em; }
-  .now-title { margin-top:2px; font-size:.83rem; color:#e2e8f0; line-height:1.3; }
-  .now-sub { margin-top:3px; font-size:.74rem; color:#94a3b8; }
+  .now-title { margin-top:3px; font-size:1.03rem; font-weight:650; color:#f0f9ff; line-height:1.28; }
+  .now-sub { margin-top:4px; font-size:.82rem; color:#93c5fd; }
 
   .tool-strip { display:flex; flex-wrap:wrap; gap:6px; min-height:28px; }
   .tool-pill { display:flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid rgba(59,130,246,.25); border-radius:999px; font-size:.72rem; color:#bfdbfe; background:rgba(30,41,59,.6); animation: toolIn .25s ease; }

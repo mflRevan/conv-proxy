@@ -3,9 +3,9 @@
   import { agentPanel } from '../stores/agent';
 </script>
 
-<section class="task-draft">
+<section class="task-draft" class:armed={!!$agentPanel.queuedTask}>
   <header>
-    <h3>Scratchpad</h3>
+    <h3>Queued Task / Scratchpad</h3>
     <div class="badges">
       <span class="state">{$conversation.taskDraft ? 'BUFFERED' : 'EMPTY'}</span>
       {#if $agentPanel.queuedTask}
@@ -27,13 +27,16 @@
 
 <style>
   .task-draft { height:100%; display:flex; flex-direction:column; gap:10px; }
+  .task-draft.armed { animation: armedGlow 1.3s ease-in-out infinite alternate; }
+  @keyframes armedGlow { from { filter: saturate(1); } to { filter: saturate(1.2); } }
+
   header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-  h3 { margin:0; font-size:.95rem; color:#cbd5e1; }
+  h3 { margin:0; font-size:1rem; color:#e2e8f0; letter-spacing:.01em; }
   .badges { display:flex; gap:6px; }
-  .state, .queued { font-size:.64rem; padding:4px 8px; border-radius:999px; }
-  .state { background:rgba(51,65,85,.8); color:#94a3b8; }
-  .queued { background:rgba(8,47,73,.8); color:#bae6fd; border:1px solid rgba(125,211,252,.3); }
-  .draft-body { flex:1; overflow:auto; padding:10px; border-radius:10px; background:rgba(30,41,59,.5); border:1px solid rgba(59,130,246,.22); color:#e2e8f0; font-size:.78rem; line-height:1.45; white-space:pre-wrap; }
-  .draft-empty { flex:1; display:flex; align-items:center; justify-content:center; text-align:center; padding:12px; border-radius:10px; border:1px dashed rgba(59,130,246,.25); color:#64748b; font-size:.75rem; }
-  .dispatch { font-size:.72rem; color:#fde68a; }
+  .state, .queued { font-size:.66rem; padding:4px 9px; border-radius:999px; }
+  .state { background:rgba(51,65,85,.85); color:#94a3b8; }
+  .queued { background:rgba(69,26,3,.78); color:#fdba74; border:1px solid rgba(251,146,60,.35); }
+  .draft-body { flex:1; overflow:auto; padding:12px; border-radius:12px; background:rgba(30,41,59,.44); border:1px solid rgba(125,211,252,.28); color:#f1f5f9; font-size:.9rem; line-height:1.5; white-space:pre-wrap; }
+  .draft-empty { flex:1; display:flex; align-items:center; justify-content:center; text-align:center; padding:12px; border-radius:12px; border:1px dashed rgba(125,211,252,.28); color:#64748b; font-size:.8rem; }
+  .dispatch { font-size:.8rem; color:#fbbf24; font-weight:600; }
 </style>
