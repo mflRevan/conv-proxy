@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jarvis Proxy Chat</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">JARVIS // CONV-PROXY</div>
+      <div id="status" class="status">offline</div>
+    </header>
+
+    <main id="chat" class="chat"></main>
+
+    <footer>
+      <label class="toggle">
+        <input id="ttsToggle" type="checkbox" />
+        <span>TTS</span>
+      </label>
+      <input id="input" type="text" placeholder="Ask Jarvis..." />
+      <button id="send">Send</button>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

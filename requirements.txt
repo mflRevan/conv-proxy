@@ -2,9 +2,11 @@ kokoro
 numpy
 torch
 soundfile
-transformers
-accelerate
 python-dotenv
 psutil
 pytest
 sentencepiece
+openai
+fastapi
+uvicorn
+websockets

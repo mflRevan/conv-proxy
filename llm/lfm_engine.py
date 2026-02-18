@@ -1,121 +1,157 @@
-"""LFM2.5-1.2B-Thinking engine wrapper."""
+"""LFM2.5-Audio GGUF engine wrapper."""
 from __future__ import annotations
 
-import ast
 import json
 import os
-import re
-import threading
+import subprocess
+import time
 from dataclasses import dataclass
-from typing import Dict, Generator, Iterable, List, Optional
+from typing import Generator, Iterable, List, Optional
 
-import torch
+import socket
+
 from dotenv import load_dotenv
-from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
-
-
-_TOOL_BLOCK_RE = re.compile(r"<\|tool_call_start\|>(.*?)<\|tool_call_end\|>", re.DOTALL)
-_CALL_RE = re.compile(r"\[(.+?)\]", re.DOTALL)
+from openai import OpenAI
 
 
 @dataclass
-class ToolCall:
-    name: str
-    arguments: Dict[str, object]
+class LFMAudioEngine:
+    model_dir: str = "models/lfm-audio"
+    runner_path: str = "runners/llama-liquid-audio-ubuntu-x64/llama-liquid-audio-server"
+    port: int = 8090
 
-
-class LFMEngine:
-    """Wrapper for LiquidAI LFM2.5-1.2B-Thinking."""
-
-    def __init__(self, model_id: str = "LiquidAI/LFM2.5-1.2B-Thinking", device: str = "cpu", dtype: str = "bfloat16") -> None:
+    def __post_init__(self) -> None:
+        self.server_process: Optional[subprocess.Popen] = None
+        self._client: Optional[OpenAI] = None
+        self._log_file: Optional[object] = None
+        self.system_prompt: str = "Respond with interleaved text and audio."
+        self.context_prompt: str = ""
         load_dotenv()
-        token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_HUB_TOKEN")
-        torch_dtype = getattr(torch, dtype) if hasattr(torch, dtype) else torch.float32
-        if device == "cpu" and torch_dtype == torch.bfloat16 and not torch.xpu.is_available():
-            # CPU bfloat16 may be unsupported on some builds
-            torch_dtype = torch.float32
+        try:
+            with open("config/PROXY.md", "r", encoding="utf-8") as f:
+                self.context_prompt = f.read().strip()
+        except FileNotFoundError:
+            self.context_prompt = ""
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_id, token=token)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            token=token,
-            torch_dtype=torch_dtype,
-            device_map="auto" if device != "cpu" else None,
-        )
-        if device == "cpu":
-            self.model.to("cpu")
-        self.model.eval()
+    @property
+    def model_path(self) -> str:
+        return os.path.join(self.model_dir, "LFM2.5-Audio-1.5B-Q4_0.gguf")
 
-    def _apply_tools(self, messages: List[Dict], tools: Optional[List[Dict]]) -> List[Dict]:
-        if not tools:
-            return messages
-        tools_json = json.dumps(tools, ensure_ascii=False)
-        messages = [m.copy() for m in messages]
-        if messages and messages[0].get("role") == "system":
-            messages[0]["content"] = f"{messages[0].get('content', '')}\n\nList of tools: {tools_json}"
-        else:
-            messages.insert(0, {"role": "system", "content": f"List of tools: {tools_json}"})
-        return messages
+    @property
+    def mmproj_path(self) -> str:
+        return os.path.join(self.model_dir, "mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf")
 
-    def _format_prompt(self, messages: List[Dict], tools: Optional[List[Dict]]) -> str:
-        formatted = self._apply_tools(messages, tools)
-        return self.tokenizer.apply_chat_template(formatted, tokenize=False, add_generation_prompt=True)
+    @property
+    def vocoder_path(self) -> str:
+        return os.path.join(self.model_dir, "vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf")
 
-    def generate(
-        self,
-        messages: List[Dict],
-        tools: Optional[List[Dict]] = None,
-        max_tokens: int = 512,
-        stream: bool = False,
-    ) -> str | Generator[str, None, None]:
-        prompt = self._format_prompt(messages, tools)
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-        gen_kwargs = dict(
-            max_new_tokens=max_tokens,
-            temperature=0.05,
-            top_k=50,
-            repetition_penalty=1.05,
-            do_sample=True,
-        )
-        if not stream:
-            output = self.model.generate(**inputs, **gen_kwargs)
-            text = self.tokenizer.decode(output[0], skip_special_tokens=True)
-            return text[len(self.tokenizer.decode(inputs["input_ids"][0], skip_special_tokens=True)) :].strip()
+    @property
+    def tokenizer_path(self) -> str:
+        return os.path.join(self.model_dir, "tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf")
 
-        streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)
-        thread = threading.Thread(target=self.model.generate, kwargs={**inputs, **gen_kwargs, "streamer": streamer})
-        thread.start()
+    def _client_for_port(self) -> OpenAI:
+        if not self._client:
+            self._client = OpenAI(base_url=f"http://127.0.0.1:{self.port}/v1", api_key="dummy")
+        return self._client
+
+    def _port_open(self) -> bool:
+        try:
+            with socket.create_connection(("127.0.0.1", self.port), timeout=1):
+                return True
+        except OSError:
+            return False
+
+    def start_server(self, timeout_s: int = 600) -> None:
+        if self.server_process and self.server_process.poll() is None:
+            return
+        # If a server is already running externally, just connect.
+        if self._port_open():
+            return
+        cmd = [
+            self.runner_path,
+            "-m",
+            self.model_path,
+            "-mm",
+            self.mmproj_path,
+            "-mv",
+            self.vocoder_path,
+            "--tts-speaker-file",
+            self.tokenizer_path,
+            "--port",
+            str(self.port),
+        ]
+        env = os.environ.copy()
+        runner_dir = os.path.dirname(self.runner_path)
+        env["LD_LIBRARY_PATH"] = f"{runner_dir}:{env.get('LD_LIBRARY_PATH', '')}"
+        self._log_file = open("lfm_server.log", "a", encoding="utf-8")
+        self.server_process = subprocess.Popen(cmd, env=env, stdout=self._log_file, stderr=subprocess.STDOUT)
+        self._wait_ready(timeout_s=timeout_s)
+
+    def _wait_ready(self, timeout_s: int = 600) -> None:
+        start = time.time()
+        while time.time() - start < timeout_s:
+            if self._port_open():
+                return
+            time.sleep(1.0)
+        raise RuntimeError("LFM server did not become ready in time")
+
+    def stop_server(self) -> None:
+        if self.server_process and self.server_process.poll() is None:
+            self.server_process.terminate()
+            try:
+                self.server_process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.server_process.kill()
+        if self._log_file:
+            try:
+                self._log_file.close()
+            except Exception:
+                pass
+        self._log_file = None
+        self.server_process = None
+
+    def chat(self, messages: List[dict], max_tokens: int = 512, stream: bool = False) -> str | Generator[str, None, None]:
+        client = self._client_for_port()
+        filtered: List[dict] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role == "system":
+                continue
+            content = msg.get("content", "")
+            if role == "assistant":
+                filtered.append({"role": "user", "content": f"Assistant: {content}"})
+            else:
+                filtered.append({"role": "user", "content": content})
+        prepared: List[dict] = [{"role": "system", "content": self.system_prompt}]
+        if self.context_prompt:
+            prepared.append({"role": "user", "content": f"Context:\n{self.context_prompt}"})
+        prepared.extend(filtered)
 
         def _iter() -> Generator[str, None, None]:
-            for token in streamer:
-                yield token
-            thread.join()
+            for chunk in client.chat.completions.create(
+                model="LFM2.5-Audio-1.5B",
+                messages=prepared,
+                max_tokens=max_tokens,
+                stream=True,
+            ):
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    yield delta.content
 
-        return _iter()
+        if stream:
+            return _iter()
 
-    def parse_tool_calls(self, response: str) -> List[Dict]:
-        calls: List[Dict] = []
-        for block in _TOOL_BLOCK_RE.findall(response):
-            for call_txt in _CALL_RE.findall(block):
-                parsed = self._parse_call(call_txt)
-                if parsed:
-                    calls.append(parsed)
-        return calls
+        text = ""
+        for part in _iter():
+            text += part
+        return text
 
-    def _parse_call(self, call_txt: str) -> Optional[Dict]:
-        try:
-            expr = ast.parse(call_txt, mode="eval").body
-        except SyntaxError:
-            return None
-        if not isinstance(expr, ast.Call):
-            return None
-        name = expr.func.id if isinstance(expr.func, ast.Name) else None
-        if not name:
-            return None
-        kwargs: Dict[str, object] = {}
-        for kw in expr.keywords:
-            kwargs[kw.arg] = ast.literal_eval(kw.value)
-        return {"name": name, "arguments": kwargs}
+    def chat_stream(self, messages: List[dict], max_tokens: int = 512) -> Generator[str, None, None]:
+        return self.chat(messages=messages, max_tokens=max_tokens, stream=True)  # type: ignore[return-value]
 
-    def format_tool_result(self, tool_name: str, result: object) -> Dict:
-        return {"role": "tool", "name": tool_name, "content": json.dumps(result, ensure_ascii=False)}
+    def __enter__(self) -> "LFMAudioEngine":
+        self.start_server()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.stop_server()

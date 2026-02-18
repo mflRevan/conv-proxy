@@ -6,7 +6,7 @@ from typing import Dict, Generator, List, Optional
 
 import numpy as np
 
-from llm.lfm_engine import LFMEngine
+from llm.lfm_engine import LFMAudioEngine
 from tts.kokoro_streaming import KokoroStreamingTTS
 
 
@@ -16,17 +16,18 @@ class ConversationalProxy:
     def __init__(
         self,
         max_tokens: int = 2048,
-        engine: Optional[LFMEngine] = None,
+        engine: Optional[LFMAudioEngine] = None,
         tts: Optional[KokoroStreamingTTS] = None,
     ) -> None:
         self.max_tokens = max_tokens
         self.history: List[Dict] = []
         self.last_interaction: Optional[float] = None
-        self.engine = engine or LFMEngine()
+        self.engine = engine or LFMAudioEngine()
         self.tts = tts or KokoroStreamingTTS()
         self.system_prompt = self._load_system_prompt()
         if self.system_prompt:
             self.history.append({"role": "system", "content": self.system_prompt})
+        self.engine.start_server()
 
     def _load_system_prompt(self) -> str:
         try:
@@ -36,19 +37,18 @@ class ConversationalProxy:
             return ""
 
     def _trim_history(self) -> None:
-        if not self.engine or not self.engine.tokenizer:
-            return
+        # rough token estimate: 4 chars per token
         while True:
-            tokens = sum(len(self.engine.tokenizer.encode(m.get("content", ""))) for m in self.history)
-            if tokens <= self.max_tokens or len(self.history) <= 1:
+            chars = sum(len(m.get("content", "")) for m in self.history)
+            approx_tokens = chars // 4
+            if approx_tokens <= self.max_tokens or len(self.history) <= 1:
                 break
-            # keep system prompt, remove oldest user/assistant pair
             self.history.pop(1)
 
     def process_input(self, text: str) -> Generator[np.ndarray, None, None]:
         self.history.append({"role": "user", "content": text})
         self._trim_history()
-        response = self.engine.generate(self.history, stream=False, max_tokens=256)
+        response = self.engine.chat(self.history, stream=False, max_tokens=256)
         self.history.append({"role": "assistant", "content": response})
         self._trim_history()
         self.last_interaction = time.time()

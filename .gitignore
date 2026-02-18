@@ -5,3 +5,6 @@ __pycache__/
 .env
 *.wav
 .cache/
+models/
+runners/
+lfm_server.log
