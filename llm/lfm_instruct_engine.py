@@ -1,32 +1,20 @@
-"""LFM2.5-Thinking GGUF engine wrapper (llama-cpp-python)."""
+"""LFM2.5-Instruct GGUF engine wrapper (llama-cpp-python)."""
 from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from threading import Lock
 from typing import Generator, List, Optional
 
 from llama_cpp import Llama
 
-_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
-
-
-def _strip_think(text: str) -> str:
-    return _THINK_RE.sub("", text).strip()
-
-
-def _extract_think(text: str) -> tuple[str, str]:
-    """Return (thinking_text, final_text)."""
-    m = re.search(r"<think>(.*?)</think>", text, re.DOTALL)
-    thinking = m.group(1).strip() if m else ""
-    final = _THINK_RE.sub("", text).strip()
-    return thinking, final
+_TOOL_CALL_RE = re.compile(r"<\|tool_call_start\|>(.*?)<\|tool_call_end\|>", re.DOTALL)
 
 
 @dataclass
-class LFMThinkingEngine:
-    model_path: str = "models/lfm-thinking/LFM2.5-1.2B-Thinking-Q4_0.gguf"
+class LFMInstructEngine:
+    model_path: str = "models/lfm-instruct/LFM2.5-1.2B-Instruct-Q4_0.gguf"
     n_ctx: int = 4096
     n_threads: Optional[int] = None
     n_batch: int = 256
@@ -65,9 +53,9 @@ class LFMThinkingEngine:
             )
             return response["choices"][0]["message"]["content"]
 
-    def chat_stream_raw(self, messages: List[dict], max_tokens: int = 512,
-                        temperature: float = 0.3) -> Generator[str, None, None]:
-        """Yield raw tokens including <think> blocks."""
+    def chat_stream(self, messages: List[dict], max_tokens: int = 512,
+                    temperature: float = 0.3) -> Generator[str, None, None]:
+        """Yield raw tokens (no thinking blocks in instruct model)."""
         with self._lock:
             self._llm.reset()
             for chunk in self._llm.create_chat_completion(
@@ -79,9 +67,19 @@ class LFMThinkingEngine:
                 if delta and delta.get("content"):
                     yield delta["content"]
 
-    def chat_stream(self, messages: List[dict], max_tokens: int = 512) -> Generator[str, None, None]:
-        """Yield raw tokens (caller handles think stripping)."""
-        return self.chat_stream_raw(messages, max_tokens)
+    @staticmethod
+    def parse_tool_calls(text: str) -> list[dict]:
+        """Extract tool calls from model output."""
+        calls = []
+        for m in _TOOL_CALL_RE.finditer(text):
+            raw = m.group(1).strip()
+            calls.append({"raw": raw})
+        return calls
+
+    @staticmethod
+    def strip_tool_calls(text: str) -> str:
+        """Remove tool call tokens from visible output."""
+        return _TOOL_CALL_RE.sub("", text).strip()
 
     def __enter__(self):
         return self

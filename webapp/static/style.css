@@ -105,6 +105,39 @@ header {
   color: #94a3b8;
 }
 
+.thinking {
+  margin-top: 8px;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.thinking summary {
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  background: #0b0f14;
+  user-select: none;
+}
+
+.thinking summary:hover {
+  color: #e6edf3;
+}
+
+.thinking-content {
+  padding: 8px 10px;
+  font-size: 0.75rem;
+  color: #64748b;
+  background: #060810;
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  line-height: 1.4;
+}
+
 footer {
   display: flex;
   gap: 10px;

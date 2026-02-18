@@ -10,6 +10,7 @@ openai
 fastapi
 uvicorn
 websockets
+python-multipart
 llama-cpp-python
 useful-moonshine-onnx
 moonshine
