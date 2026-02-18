@@ -4,6 +4,7 @@ export interface SettingsState {
   sttBackend: string;
   ttsEnabled: boolean;
   vadThreshold: number;
+  silenceDurationMs: number;
   autoSend: boolean;
   showSettings: boolean;
 }
@@ -12,6 +13,7 @@ const defaultSettings: SettingsState = {
   sttBackend: 'moonshine-tiny',
   ttsEnabled: true,
   vadThreshold: 0.5,
+  silenceDurationMs: 800,
   autoSend: true,
   showSettings: false,
 };

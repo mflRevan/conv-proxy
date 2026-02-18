@@ -1,183 +1,132 @@
 import { audio } from '../stores/audio';
 import { settings } from '../stores/settings';
-import { sendAudio, cancelGeneration } from './websocket';
+import { sendAudioChunk, cancelGeneration, updateVoiceConfig } from './websocket';
 import { get } from 'svelte/store';
 
+function floatToPcm16Base64(input: Float32Array): string {
+  const pcm = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i++) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  const bytes = new Uint8Array(pcm.buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
 class AudioRecorder {
-  private mediaRecorder: MediaRecorder | null = null;
-  private audioChunks: Blob[] = [];
   private stream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
-  private analyser: AnalyserNode | null = null;
-  private animationFrame: number | null = null;
-  private silenceTimer: number | null = null;
-  private hasSpokenYet = false;
+  private sourceNode: MediaStreamAudioSourceNode | null = null;
+  private processorNode: ScriptProcessorNode | null = null;
 
-  private readonly SILENCE_DURATION = 1500; // ms
-  private readonly MIN_RECORDING_TIME = 500; // ms
-  private recordingStartTime = 0;
+  private running = false;
+  private readonly targetSampleRate = 16000;
 
   async start() {
+    if (this.running) return;
+
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      // Set up audio analysis
+      const s = get(settings);
+
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
+      });
+
       this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const source = this.audioContext.createMediaStreamSource(this.stream);
-      this.analyser = this.audioContext.createAnalyser();
-      this.analyser.fftSize = 256;
-      source.connect(this.analyser);
+      this.sourceNode = this.audioContext.createMediaStreamSource(this.stream);
+      this.processorNode = this.audioContext.createScriptProcessor(2048, 1, 1);
 
-      // Start MediaRecorder
-      this.mediaRecorder = new MediaRecorder(this.stream);
-      this.audioChunks = [];
-      this.hasSpokenYet = false;
-      this.recordingStartTime = Date.now();
+      const sourceRate = this.audioContext.sampleRate;
+      const downsampleRatio = sourceRate / this.targetSampleRate;
 
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          this.audioChunks.push(event.data);
+      this.processorNode.onaudioprocess = (event) => {
+        if (!this.running) return;
+        const input = event.inputBuffer.getChannelData(0);
+
+        // light local RMS for UI feedback only
+        let sum = 0;
+        for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+        const rms = Math.sqrt(sum / input.length);
+        const level = Math.min(100, rms * 450);
+
+        audio.update(state => ({
+          ...state,
+          micState: 'listening',
+          audioLevel: level,
+          isVadActive: rms > (s.vadThreshold * 0.06),
+        }));
+
+        // downsample to 16k mono
+        const outLen = Math.floor(input.length / downsampleRatio);
+        const out = new Float32Array(outLen);
+        for (let i = 0; i < outLen; i++) {
+          const idx = Math.floor(i * downsampleRatio);
+          out[i] = input[idx] || 0;
         }
+
+        sendAudioChunk(floatToPcm16Base64(out), this.targetSampleRate);
       };
 
-      this.mediaRecorder.onstop = async () => {
-        await this.processRecording();
-      };
+      this.sourceNode.connect(this.processorNode);
+      // connect to destination keeps processor alive in some browsers
+      this.processorNode.connect(this.audioContext.destination);
 
-      this.mediaRecorder.start(100); // Collect data every 100ms
-      
-      audio.update(state => ({ 
-        ...state, 
-        micState: 'listening',
-        currentTranscription: '',
-      }));
+      // Sync backend runtime config
+      updateVoiceConfig({
+        stt_backend: s.sttBackend,
+        tts: s.ttsEnabled,
+        vad: {
+          energy_threshold: Math.max(0.005, s.vadThreshold * 0.04),
+          silence_duration_ms: s.silenceDurationMs,
+          min_speech_ms: 250,
+        },
+      });
 
-      // Start monitoring audio levels
-      this.monitorAudioLevel();
-      
-      // Cancel any ongoing TTS playback
+      this.running = true;
+      audio.update(state => ({ ...state, micState: 'listening', currentTranscription: '' }));
+
+      // barge-in: cancel any ongoing generation immediately on mic start
       cancelGeneration();
-
     } catch (error) {
-      console.error('Error starting recording:', error);
-      audio.update(state => ({ ...state, micState: 'idle' }));
+      console.error('Error starting streaming recorder:', error);
+      this.stop();
     }
   }
 
   stop() {
-    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-      this.mediaRecorder.stop();
-    }
-    
-    this.cleanup();
-  }
+    this.running = false;
 
-  private cleanup() {
-    if (this.animationFrame) {
-      cancelAnimationFrame(this.animationFrame);
-      this.animationFrame = null;
+    if (this.processorNode) {
+      try { this.processorNode.disconnect(); } catch {}
+      this.processorNode.onaudioprocess = null;
+      this.processorNode = null;
     }
-
-    if (this.silenceTimer) {
-      clearTimeout(this.silenceTimer);
-      this.silenceTimer = null;
+    if (this.sourceNode) {
+      try { this.sourceNode.disconnect(); } catch {}
+      this.sourceNode = null;
     }
-
     if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop());
+      this.stream.getTracks().forEach(t => t.stop());
       this.stream = null;
     }
-
     if (this.audioContext) {
       this.audioContext.close();
       this.audioContext = null;
     }
 
-    this.analyser = null;
-  }
-
-  private monitorAudioLevel() {
-    if (!this.analyser) return;
-
-    const bufferLength = this.analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-
-    const check = () => {
-      if (!this.analyser) return;
-
-      this.analyser.getByteFrequencyData(dataArray);
-      
-      // Calculate average volume
-      const sum = dataArray.reduce((a, b) => a + b, 0);
-      const average = sum / bufferLength;
-      const level = Math.min(100, (average / 255) * 200);
-
-      audio.update(state => ({ ...state, audioLevel: level }));
-
-      // Simple VAD: check if audio is above threshold
-      const settingsState = get(settings);
-      const threshold = settingsState.vadThreshold * 128; // 0-128 scale
-      const isActive = average > threshold;
-
-      audio.update(state => ({ ...state, isVadActive: isActive }));
-
-      // Auto-stop on silence
-      if (isActive) {
-        this.hasSpokenYet = true;
-        
-        // Clear silence timer when speech is detected
-        if (this.silenceTimer) {
-          clearTimeout(this.silenceTimer);
-          this.silenceTimer = null;
-        }
-      } else if (this.hasSpokenYet && !this.silenceTimer) {
-        // Start silence timer once we've detected speech and it stops
-        const elapsed = Date.now() - this.recordingStartTime;
-        
-        if (elapsed > this.MIN_RECORDING_TIME) {
-          this.silenceTimer = window.setTimeout(() => {
-            console.log('Silence detected, stopping recording');
-            this.stop();
-          }, this.SILENCE_DURATION);
-        }
-      }
-
-      this.animationFrame = requestAnimationFrame(check);
-    };
-
-    check();
-  }
-
-  private async processRecording() {
-    audio.update(state => ({ 
-      ...state, 
-      micState: 'processing',
+    audio.update(state => ({
+      ...state,
+      micState: 'idle',
       audioLevel: 0,
       isVadActive: false,
     }));
-
-    try {
-      // Combine audio chunks
-      const audioBlob = new Blob(this.audioChunks, { type: 'audio/wav' });
-      
-      // Convert to base64
-      const reader = new FileReader();
-      reader.readAsDataURL(audioBlob);
-      
-      reader.onloadend = () => {
-        const base64 = (reader.result as string).split(',')[1];
-        const settingsState = get(settings);
-        
-        // Send to server
-        sendAudio(base64, settingsState.sttBackend);
-        
-        audio.update(state => ({ ...state, micState: 'idle' }));
-      };
-
-    } catch (error) {
-      console.error('Error processing recording:', error);
-      audio.update(state => ({ ...state, micState: 'idle' }));
-    }
   }
 }
 

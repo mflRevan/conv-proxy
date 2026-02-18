@@ -63,6 +63,21 @@ _proxy = ProxyController(
 
 # Track active stream cancellation per connection
 _cancel_events: dict[int, threading.Event] = {}
+_chat_clients: set[WebSocket] = set()
+_voice_clients: set[WebSocket] = set()
+
+
+async def _broadcast(msg: dict):
+    payload = json.dumps(msg)
+    stale: list[WebSocket] = []
+    for ws in list(_chat_clients | _voice_clients):
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            stale.append(ws)
+    for ws in stale:
+        _chat_clients.discard(ws)
+        _voice_clients.discard(ws)
 
 
 def pcm16_base64(audio: np.ndarray) -> str:
@@ -97,7 +112,9 @@ def api_status() -> JSONResponse:
         "reasoning": _engine.reasoning,
         "agent_status": _proxy.state.agent_status,
         "agent_task": _proxy.state.agent_current_task,
+        "scratchpad_task": _proxy.state.scratchpad_task,
         "queued_task": _proxy.state.queued_task,
+        "must_brief_before_dispatch": _proxy.state.must_brief_before_dispatch,
         "conversation_length": len(_proxy.conversation),
     })
 
@@ -110,7 +127,14 @@ async def update_agent_context(body: dict) -> JSONResponse:
         current_task=body.get("current_task", ""),
         turns=body.get("turns"),
         compressed_context=body.get("compressed_context", ""),
+        just_finished=bool(body.get("just_finished", False)),
+        completion_brief=body.get("completion_brief", ""),
     )
+
+    brief = _proxy.pop_pending_completion_brief()
+    if brief:
+        await _broadcast({"type": "agent_brief", "content": brief})
+
     return JSONResponse({"ok": True})
 
 
@@ -149,6 +173,7 @@ async def chat_http(request: ChatRequest) -> JSONResponse:
         "text": result["reply"],
         "action": result["action"],
         "task_draft": result["task_draft"],
+        "queued_task": result.get("queued_task", ""),
         "tool_calls": result["tool_calls"],
         "timings": result["timings"],
     }
@@ -174,6 +199,7 @@ async def chat_http(request: ChatRequest) -> JSONResponse:
 @app.websocket("/ws/chat")
 async def chat_ws(ws: WebSocket) -> None:
     await ws.accept()
+    _chat_clients.add(ws)
     conn_id = id(ws)
     cancel_event = threading.Event()
     _cancel_events[conn_id] = cancel_event
@@ -182,6 +208,8 @@ async def chat_ws(ws: WebSocket) -> None:
         "type": "status", "status": "connected",
         "model": _engine.model,
         "agent_status": _proxy.state.agent_status,
+        "task_draft": _proxy.state.scratchpad_task,
+        "queued_task": _proxy.state.queued_task,
     }))
 
     loop = asyncio.get_event_loop()
@@ -273,7 +301,8 @@ async def chat_ws(ws: WebSocket) -> None:
                         "type": "action",
                         "action": evt_data.get("action", ""),
                         "task": evt_data.get("task", ""),
-                        "task_draft": _proxy.state.queued_task,
+                        "task_draft": _proxy.state.scratchpad_task,
+                        "queued_task": _proxy.state.queued_task,
                     }))
 
                 elif evt_type == "done":
@@ -307,13 +336,15 @@ async def chat_ws(ws: WebSocket) -> None:
             await ws.send_text(json.dumps({
                 "type": "done",
                 "agent_status": _proxy.state.agent_status,
-                "task_draft": _proxy.state.queued_task,
+                "task_draft": _proxy.state.scratchpad_task,
+                "queued_task": _proxy.state.queued_task,
             }))
 
     except WebSocketDisconnect:
         pass
     finally:
         _cancel_events.pop(conn_id, None)
+        _chat_clients.discard(ws)
 
 
 # ─── Real-time Voice WebSocket ───
@@ -344,7 +375,8 @@ async def voice_ws(ws: WebSocket) -> None:
       - {"type": "error", "message": "..."}
     """
     await ws.accept()
-    
+    _voice_clients.add(ws)
+
     pipeline = VoicePipeline(stt_backend=DEFAULT_STT_BACKEND, tts_engine=_tts)
     want_tts = True
     loop = asyncio.get_event_loop()
@@ -369,6 +401,8 @@ async def voice_ws(ws: WebSocket) -> None:
         "type": "status", "status": "connected",
         "model": _engine.model,
         "agent_status": _proxy.state.agent_status,
+        "task_draft": _proxy.state.scratchpad_task,
+        "queued_task": _proxy.state.queued_task,
         "stt_backend": pipeline.stt_backend,
         "vad_config": {
             "energy_threshold": pipeline.vad_config.energy_threshold,
@@ -424,7 +458,8 @@ async def voice_ws(ws: WebSocket) -> None:
                     "type": "action",
                     "action": evt_data.get("action", ""),
                     "task": evt_data.get("task", ""),
-                    "task_draft": _proxy.state.queued_task,
+                    "task_draft": _proxy.state.scratchpad_task,
+                    "queued_task": _proxy.state.queued_task,
                 })
             elif evt_type == "done":
                 pass
@@ -457,7 +492,8 @@ async def voice_ws(ws: WebSocket) -> None:
             await send({
                 "type": "done",
                 "agent_status": _proxy.state.agent_status,
-                "task_draft": _proxy.state.queued_task,
+                "task_draft": _proxy.state.scratchpad_task,
+                "queued_task": _proxy.state.queued_task,
             })
         
         pipeline.finish_response()
@@ -534,6 +570,7 @@ async def voice_ws(ws: WebSocket) -> None:
         pass
     finally:
         pipeline.reset()
+        _voice_clients.discard(ws)
 
 
 # ─── Dispatch timer (background task) ───
@@ -543,8 +580,10 @@ async def _dispatch_loop():
         await asyncio.sleep(2)
         task = _proxy.check_dispatch()
         if task:
-            # TODO: Send to OpenClaw main agent session
-            print(f"[DISPATCH] Would send to agent: {task[:80]}")
+            # Integration hook: external OpenClaw bridge should consume this event and
+            # send task to main session (sessions_send). For now, broadcast and log.
+            print(f"[DISPATCH] Ready for main agent: {task[:120]}")
+            await _broadcast({"type": "dispatch_ready", "task": task})
 
 
 @app.on_event("startup")

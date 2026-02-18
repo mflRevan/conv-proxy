@@ -89,6 +89,22 @@
         </div>
 
         <div class="setting-group">
+          <label for="silence-duration">Silence End Duration (ms)</label>
+          <div class="slider-group">
+            <input
+              id="silence-duration"
+              type="range"
+              min="400"
+              max="2000"
+              step="50"
+              bind:value={$settings.silenceDurationMs}
+            />
+            <span class="slider-value">{$settings.silenceDurationMs}</span>
+          </div>
+          <p class="hint">How long silence must last before a turn ends (server VAD).</p>
+        </div>
+
+        <div class="setting-group">
           <label class="toggle-label">
             <input 
               type="checkbox" 
@@ -96,7 +112,7 @@
             />
             <span>Auto-send on silence</span>
           </label>
-          <p class="hint">Automatically send audio when silence is detected.</p>
+          <p class="hint">Turn handling is voice-first; silence triggers processing.</p>
         </div>
       </div>
     </div>

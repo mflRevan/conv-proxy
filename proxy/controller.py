@@ -1,114 +1,140 @@
 """
-Conv-proxy controller v2: OpenRouter-backed with native tool calling.
+Conv-proxy controller: OpenRouter-backed with explicit scratchpad/queue semantics.
 
-The model handles intent classification and tool calling natively.
-The controller manages state, dispatch timing, and context injection.
+Key behavior:
+- Proxy maintains a mutable scratchpad task buffer.
+- Proxy only queues a task when user deliberately asks to queue/send it.
+- Any new user interaction while a task is queued de-queues it back to scratchpad.
+- Dispatch happens only when: queued task exists, agent is idle, dispatch delay passed,
+  and required completion briefing has been sent.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Optional, Generator
 
 from llm.openrouter_engine import OpenRouterEngine
 
 
-# ─── Tool definitions ───
+# ─── Tool definitions ───────────────────────────────────────────────────────────
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "interrupt_agent",
-            "description": "Stop/cancel/abort the main AI agent. ONLY call when user EXPLICITLY requests stopping, cancelling, or aborting.",
+            "description": "Stop/cancel/abort the main AI agent. ONLY call when user explicitly asks to stop/cancel/abort/interrupt current agent run.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "set_queued_task",
-            "description": "Set or update the queued task draft. Call whenever user describes work they want done (features, fixes, tests, benchmarks, changes, deployments). Overwrites previous draft entirely. Write a complete standalone task instruction.",
+            "name": "set_task_buffer",
+            "description": "Set or refine the scratchpad task buffer from user requests. This does NOT queue/dispatch the task.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "task": {
                         "type": "string",
-                        "description": "Complete, standalone task instruction for the main agent.",
+                        "description": "Complete standalone task instruction in scratchpad form.",
                     }
                 },
                 "required": ["task"],
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "clear_task_buffer",
+            "description": "Clear the scratchpad task buffer when user asks to discard/remove/reset it.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "queue_buffered_task",
+            "description": "Queue the current scratchpad task for later dispatch to main agent. ONLY call when user deliberately asks to queue/send/commit it.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
 ]
 
 
+def _load_fixed_proxy_prompt() -> str:
+    cfg = Path(__file__).resolve().parents[1] / "config" / "PROXY.md"
+    if cfg.exists():
+        return cfg.read_text(encoding="utf-8").strip()
+    return "You are Jarvis Proxy. Keep spoken responses concise."
+
+
+FIXED_PROXY_PROMPT = _load_fixed_proxy_prompt()
+
+
 def _build_system_prompt(state: "ProxyState") -> str:
-    """Build the system prompt with injected context."""
-    parts = [
-        "You are Jarvis Proxy, a lightweight conversational voice interface.",
-        "You bridge the user (Aiman) and the main AI agent (Jarvis).",
+    parts = [FIXED_PROXY_PROMPT, "", "## Runtime Rules"]
+    parts.extend([
+        "- Spoken replies: short, clear, 1-2 sentences unless explicitly asked for detail.",
+        "- Maintain a scratchpad task buffer via set_task_buffer/clear_task_buffer.",
+        "- Do NOT queue by default. Queue ONLY on deliberate user request (e.g. 'queue this', 'send this to Jarvis').",
+        "- interrupt_agent only on explicit stop/cancel instructions.",
+        "- If queued task gets de-queued due to new user interaction, treat it as scratchpad again.",
+        "- Be direct, efficient, lightly warm. MCU-Jarvis-like tone.",
         "",
-        "## Rules",
-        "- Keep replies to 1-2 concise sentences (you are spoken aloud via TTS)",
-        "- Call set_queued_task when user describes ANY work to be done",
-        "- Call interrupt_agent when user wants to stop/cancel/abort/interrupt, including soft phrases like 'never mind', 'forget it', 'don't do that'",
-        "- For greetings, questions, complaints, status queries: reply conversationally",
-        "- After a stop, treat the next message independently — don't assume user wants to stop again",
-        "- Be direct, efficient, slightly warm. MCU-Jarvis vibe.",
-        "",
-    ]
+    ])
 
-    # Compressed past context (mock for now, will be injected)
     if state.compressed_context:
-        parts.append("## Background Context")
-        parts.append(state.compressed_context)
-        parts.append("")
+        parts += ["## Background Context", state.compressed_context, ""]
 
-    # Live agent status
-    parts.append("## Agent Status")
-    parts.append(f"- Status: {state.agent_status.upper()}")
+    parts += ["## Agent Status", f"- Status: {state.agent_status.upper()}"]
     if state.agent_current_task:
         parts.append(f"- Current task: {state.agent_current_task}")
     parts.append("")
 
-    # Live agent turns (last N turns with main agent)
     if state.agent_turns:
-        parts.append("## Live Agent Activity (recent turns)")
+        parts.append("## Live Agent Activity (recent)")
         for turn in state.agent_turns[-4:]:
             role = turn.get("role", "?")
-            content = turn.get("content", "")[:300]
-            parts.append(f"[{role}]: {content}")
+            content = (turn.get("content", "") or "")[:300]
+            parts.append(f"[{role}] {content}")
         parts.append("")
 
-    # Queued task draft
-    if state.queued_task:
-        parts.append("## Current Queued Task Draft")
-        parts.append(f'"{state.queued_task}"')
-        parts.append("(User may refine this. Overwrite with set_queued_task.)")
-        parts.append("")
+    parts += ["## Task Buffer State"]
+    parts.append(f"- Scratchpad: {state.scratchpad_task or '(empty)'}")
+    parts.append(f"- Queued: {state.queued_task or '(none)'}")
+    parts.append(
+        "- Dispatch gate: queued task dispatches only when agent is idle, quiet delay elapsed, and latest completion brief was sent."
+    )
+    parts.append("")
 
     return "\n".join(parts)
 
 
 @dataclass
 class ProxyState:
-    """Proxy state: agent context + task queue + dispatch."""
+    scratchpad_task: str = ""
     queued_task: str = ""
+
     agent_status: str = "idle"  # idle | busy
     agent_current_task: str = ""
     agent_turns: list[dict] = field(default_factory=list)
     compressed_context: str = ""
-    dispatch_delay: float = 10.0  # seconds
+
+    dispatch_delay: float = 10.0
     _last_input_time: float = 0.0
+
+    # completion briefing gate
+    pending_completion_brief: str = ""
+    must_brief_before_dispatch: bool = False
 
 
 @dataclass
 class ProxyController:
-    """Manages proxy pipeline: context → LLM → tools → response."""
     engine: OpenRouterEngine
     state: ProxyState = field(default_factory=ProxyState)
     conversation: list[dict] = field(default_factory=list)
@@ -118,48 +144,43 @@ class ProxyController:
     on_stop: Optional[Callable] = None
     on_dispatch: Optional[Callable[[str], None]] = None
     on_task_updated: Optional[Callable[[str], None]] = None
+    on_task_queued: Optional[Callable[[str], None]] = None
 
     def _trim_history(self):
         max_msgs = self.max_history_pairs * 2
         if len(self.conversation) > max_msgs:
             self.conversation = self.conversation[-max_msgs:]
 
-    def _build_messages(self, user_msg: str) -> list[dict]:
-        """Build full message list for the LLM."""
-        system = _build_system_prompt(self.state)
-        msgs = [{"role": "system", "content": system}]
-        msgs.extend(self.conversation)
-        msgs.append({"role": "user", "content": user_msg})
-        return msgs
+    def _dequeue_on_user_interaction(self):
+        """
+        Any user interaction de-queues current queued task back into scratchpad.
+        """
+        if self.state.queued_task:
+            self.state.scratchpad_task = self.state.queued_task
+            self.state.queued_task = ""
 
     def process_message(self, user_msg: str) -> dict:
-        """
-        Process user message (non-streaming).
-        Returns: {action, reply, task_draft, tool_calls, timings}
-        """
         self.state._last_input_time = time.monotonic()
+        self._dequeue_on_user_interaction()
         self.conversation.append({"role": "user", "content": user_msg})
         self._trim_history()
 
         t0 = time.monotonic()
-        system = _build_system_prompt(self.state)
-        msgs_for_api = [{"role": "system", "content": system}] + self.conversation
-
+        msgs_for_api = [{"role": "system", "content": _build_system_prompt(self.state)}] + self.conversation
         result = self.engine.chat(msgs_for_api, tools=TOOLS)
         latency = (time.monotonic() - t0) * 1000
 
-        reply = result["content"] or ""
+        reply = result.get("content") or ""
         tool_calls = result.get("tool_calls") or []
         action = "chat"
 
-        # Process tool calls
         for tc in tool_calls:
             fn_name = tc["function"]["name"]
             raw_args = tc["function"].get("arguments", "")
             try:
                 fn_args = json.loads(raw_args) if raw_args else {}
             except json.JSONDecodeError:
-                fn_args = {"task": raw_args}  # fallback: treat as raw task text
+                fn_args = {"task": raw_args}
 
             if fn_name == "interrupt_agent":
                 action = "stop"
@@ -167,61 +188,60 @@ class ProxyController:
                 if self.on_stop:
                     self.on_stop()
 
-            elif fn_name == "set_queued_task":
-                action = "task"
+            elif fn_name == "set_task_buffer":
+                action = "buffer"
                 task_text = fn_args.get("task", "")
-                if not task_text and isinstance(fn_args, str):
-                    task_text = fn_args
                 if task_text:
-                    self.state.queued_task = task_text
+                    self.state.scratchpad_task = task_text
                     if self.on_task_updated:
                         self.on_task_updated(task_text)
 
-        # Add assistant message (with tool calls) + tool responses to conversation
+            elif fn_name == "clear_task_buffer":
+                action = "buffer_cleared"
+                self.state.scratchpad_task = ""
+
+            elif fn_name == "queue_buffered_task":
+                if self.state.scratchpad_task:
+                    action = "queued"
+                    self.state.queued_task = self.state.scratchpad_task
+                    if self.on_task_queued:
+                        self.on_task_queued(self.state.queued_task)
+
         assistant_msg = {"role": "assistant", "content": reply}
         if tool_calls:
             assistant_msg["tool_calls"] = tool_calls
         self.conversation.append(assistant_msg)
 
-        # Add tool responses so the model knows the outcome
         for tc in tool_calls:
             tc_id = tc.get("id", "")
             fn_name = tc["function"]["name"]
-            tool_result = {"status": "ok"}
-            if fn_name == "set_queued_task":
-                tool_result["queued_task"] = self.state.queued_task[:100]
+            tool_result = {"status": "ok", "scratchpad": self.state.scratchpad_task[:100], "queued": bool(self.state.queued_task)}
+            if fn_name == "queue_buffered_task" and not self.state.scratchpad_task:
+                tool_result = {"status": "error", "message": "scratchpad empty"}
             self.conversation.append({
                 "role": "tool",
                 "tool_call_id": tc_id,
                 "content": json.dumps(tool_result),
             })
-        self._trim_history()
 
+        self._trim_history()
         return {
             "action": action,
             "reply": reply,
-            "task_draft": self.state.queued_task,
+            "task_draft": self.state.scratchpad_task,
+            "queued_task": self.state.queued_task,
             "tool_calls": [{"name": tc["function"]["name"], "args": tc["function"].get("arguments", "")} for tc in tool_calls],
-            "timings": {"total": latency, "api": result["latency_ms"]},
+            "timings": {"total": latency, "api": result.get("latency_ms", 0.0)},
         }
 
-    def process_message_stream(
-        self,
-        user_msg: str,
-        cancel_event: threading.Event | None = None,
-    ) -> Generator[dict, None, None]:
-        """
-        Streaming version. Yields deltas as they arrive.
-        Yields same types as OpenRouterEngine.chat_stream plus tool processing.
-        """
+    def process_message_stream(self, user_msg: str, cancel_event: threading.Event | None = None) -> Generator[dict, None, None]:
         self.state._last_input_time = time.monotonic()
+        self._dequeue_on_user_interaction()
         self.conversation.append({"role": "user", "content": user_msg})
         self._trim_history()
 
         msgs = [{"role": "system", "content": _build_system_prompt(self.state)}] + self.conversation
-
-        reply_parts = []
-        tool_calls = []
+        reply_parts: list[str] = []
 
         for delta in self.engine.chat_stream(msgs, tools=TOOLS, cancel_event=cancel_event):
             dt = delta["type"]
@@ -231,10 +251,10 @@ class ProxyController:
                 yield delta
 
             elif dt == "tool_call":
-                tc = delta
-                fn_name = tc["name"]
+                fn_name = delta["name"]
+                raw_args = delta.get("arguments", "")
                 try:
-                    fn_args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                    fn_args = json.loads(raw_args) if raw_args else {}
                 except json.JSONDecodeError:
                     fn_args = {}
 
@@ -244,15 +264,26 @@ class ProxyController:
                         self.on_stop()
                     yield {"type": "action", "action": "stop"}
 
-                elif fn_name == "set_queued_task":
+                elif fn_name == "set_task_buffer":
                     task_text = fn_args.get("task", "")
                     if task_text:
-                        self.state.queued_task = task_text
+                        self.state.scratchpad_task = task_text
                         if self.on_task_updated:
                             self.on_task_updated(task_text)
-                    yield {"type": "action", "action": "task", "task": task_text}
+                    yield {"type": "action", "action": "buffer", "task": task_text}
 
-                tool_calls.append({"name": fn_name, "args": fn_args})
+                elif fn_name == "clear_task_buffer":
+                    self.state.scratchpad_task = ""
+                    yield {"type": "action", "action": "buffer_cleared"}
+
+                elif fn_name == "queue_buffered_task":
+                    if self.state.scratchpad_task:
+                        self.state.queued_task = self.state.scratchpad_task
+                        if self.on_task_queued:
+                            self.on_task_queued(self.state.queued_task)
+                        yield {"type": "action", "action": "queued", "task": self.state.queued_task}
+                    else:
+                        yield {"type": "action", "action": "queue_failed", "task": ""}
 
             elif dt == "reasoning":
                 yield delta
@@ -264,11 +295,7 @@ class ProxyController:
                     self._trim_history()
                 yield delta
 
-            elif dt == "cancelled":
-                yield delta
-                return
-
-            elif dt == "error":
+            elif dt in ("cancelled", "error"):
                 yield delta
                 return
 
@@ -278,8 +305,10 @@ class ProxyController:
         current_task: str = "",
         turns: list[dict] | None = None,
         compressed_context: str = "",
+        just_finished: bool = False,
+        completion_brief: str = "",
     ):
-        """Update live agent context."""
+        prev_status = self.state.agent_status
         self.state.agent_status = status
         self.state.agent_current_task = current_task
         if turns is not None:
@@ -287,15 +316,30 @@ class ProxyController:
         if compressed_context:
             self.state.compressed_context = compressed_context
 
+        finished_transition = (prev_status == "busy" and status == "idle")
+        if just_finished or finished_transition:
+            if completion_brief.strip():
+                self.state.pending_completion_brief = completion_brief.strip()
+            self.state.must_brief_before_dispatch = True
+
+    def pop_pending_completion_brief(self) -> str:
+        brief = self.state.pending_completion_brief
+        self.state.pending_completion_brief = ""
+        if brief:
+            self.state.must_brief_before_dispatch = False
+        return brief
+
     def check_dispatch(self) -> Optional[str]:
-        """Check if queued task should be dispatched. Returns task text or None."""
         if not self.state.queued_task:
             return None
         if self.state.agent_status != "idle":
             return None
+        if self.state.must_brief_before_dispatch:
+            return None
         elapsed = time.monotonic() - self.state._last_input_time
         if elapsed < self.state.dispatch_delay:
             return None
+
         task = self.state.queued_task
         self.state.queued_task = ""
         if self.on_dispatch:
@@ -303,9 +347,11 @@ class ProxyController:
         return task
 
     def reset(self):
-        """Full reset."""
         self.conversation.clear()
+        self.state.scratchpad_task = ""
         self.state.queued_task = ""
         self.state.agent_status = "idle"
         self.state.agent_current_task = ""
         self.state.agent_turns.clear()
+        self.state.pending_completion_brief = ""
+        self.state.must_brief_before_dispatch = False
