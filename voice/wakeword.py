@@ -60,7 +60,7 @@ class WakewordDetector:
         if not self.enabled:
             return True
         if not self._available or self._model is None:
-            return True
+            return False
 
         try:
             pcm16 = np.clip(pcm_f32, -1.0, 1.0)
