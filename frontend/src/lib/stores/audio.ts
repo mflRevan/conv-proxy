@@ -9,6 +9,9 @@ export interface AudioState {
   audioLevel: number; // 0-100
   isVadActive: boolean;
   currentTranscription: string;
+  wakewordActive: boolean;
+  wakewordPulse: number;
+  streaming: boolean;
 }
 
 const initialState: AudioState = {
@@ -17,6 +20,9 @@ const initialState: AudioState = {
   audioLevel: 0,
   isVadActive: false,
   currentTranscription: '',
+  wakewordActive: false,
+  wakewordPulse: 0,
+  streaming: false,
 };
 
 export const audio = writable<AudioState>(initialState);

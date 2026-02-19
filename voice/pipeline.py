@@ -72,6 +72,7 @@ class VoicePipeline:
     # Wakeword gate
     wakeword: WakewordDetector = field(default_factory=WakewordDetector)
     _wakeword_active_until: float = 0.0
+    wakeword_active_window_s: float = 10.0
 
     # Callbacks (set by WebSocket handler)
     on_state_change: Optional[Callable[[PipelineState], None]] = None
@@ -123,7 +124,7 @@ class VoicePipeline:
         if self.state == PipelineState.IDLE and self.wakeword.enabled:
             armed = now < self._wakeword_active_until
             if not armed and self.wakeword.detect(pcm_data, sample_rate=self.vad_config.sample_rate):
-                self._wakeword_active_until = now + 8.0
+                self._wakeword_active_until = now + self.wakeword_active_window_s
                 if self.on_vad_event:
                     self.on_vad_event("wakeword")
                 armed = True
@@ -156,6 +157,7 @@ class VoicePipeline:
                 if silence_ms >= self.vad_config.silence_duration_ms:
                     if speech_ms >= self.vad_config.min_speech_ms:
                         self._set_state(PipelineState.PROCESSING)
+                        self._wakeword_active_until = now + self.wakeword_active_window_s
                         if self.on_vad_event:
                             self.on_vad_event("speech_end")
                         return "speech_end"

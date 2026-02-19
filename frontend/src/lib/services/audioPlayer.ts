@@ -80,6 +80,31 @@ class AudioPlayer {
     source.start();
   }
 
+  async playChime() {
+    if (!this.audioContext) return;
+
+    if (this.audioContext.state === 'suspended') {
+      try { await this.audioContext.resume(); } catch {}
+    }
+
+    const ctx = this.audioContext;
+    const now = ctx.currentTime;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+    gain.connect(ctx.destination);
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(740, now);
+    osc.frequency.exponentialRampToValueAtTime(980, now + 0.12);
+    osc.connect(gain);
+    osc.start(now);
+    osc.stop(now + 0.36);
+  }
+
   stop() {
     if (this.currentSource) {
       try {

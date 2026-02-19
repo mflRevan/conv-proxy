@@ -191,6 +191,21 @@
           </div>
           <p class="hint">Higher = stricter wakeword detection.</p>
         </div>
+        <div class="setting-group">
+          <label for="wakeword-window">Wakeword Idle Timeout (ms)</label>
+          <div class="slider-group">
+            <input
+              id="wakeword-window"
+              type="range"
+              min="5000"
+              max="30000"
+              step="500"
+              bind:value={$settings.wakewordActiveWindowMs}
+            />
+            <span class="slider-value">{$settings.wakewordActiveWindowMs}</span>
+          </div>
+          <p class="hint">How long before returning to idle after no speech is detected.</p>
+        </div>
 
         <div class="setting-group">
           <label for="bridge-session">Agent Bridge Session</label>

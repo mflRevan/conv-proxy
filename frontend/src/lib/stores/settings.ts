@@ -8,6 +8,7 @@ export interface SettingsState {
   autoSend: boolean;
   wakewordEnabled: boolean;
   wakewordThreshold: number;
+  wakewordActiveWindowMs: number;
   showSettings: boolean;
 }
 
@@ -19,6 +20,7 @@ const defaultSettings: SettingsState = {
   autoSend: true,
   wakewordEnabled: true,
   wakewordThreshold: 0.55,
+  wakewordActiveWindowMs: 10000,
   showSettings: false,
 };
 

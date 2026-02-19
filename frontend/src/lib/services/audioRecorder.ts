@@ -58,7 +58,6 @@ class AudioRecorder {
 
         audio.update(state => ({
           ...state,
-          micState: 'listening',
           audioLevel: level,
           isVadActive: rms > (s.vadThreshold * 0.06),
         }));
@@ -85,6 +84,7 @@ class AudioRecorder {
         wakeword: {
           enabled: s.wakewordEnabled,
           threshold: s.wakewordThreshold,
+          active_window_ms: s.wakewordActiveWindowMs,
           models: ['hey jarvis'],
         },
         vad: {
@@ -95,7 +95,7 @@ class AudioRecorder {
       });
 
       this.running = true;
-      audio.update(state => ({ ...state, micState: 'listening', currentTranscription: '' }));
+      audio.update(state => ({ ...state, streaming: true, currentTranscription: '' }));
 
       // barge-in: cancel any ongoing generation immediately on mic start
       cancelGeneration();
@@ -131,6 +131,8 @@ class AudioRecorder {
       micState: 'idle',
       audioLevel: 0,
       isVadActive: false,
+      streaming: false,
+      wakewordActive: false,
     }));
   }
 }

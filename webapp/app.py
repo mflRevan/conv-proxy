@@ -150,6 +150,9 @@ def _load_session_context(session_id: str) -> tuple[str, list[dict], int, int]:
     if older_compact:
         compressed = 'Earlier compressed history:\n' + '\n'.join(older_compact)
 
+    if compressed and len(compressed) > 6000:
+        compressed = compressed[:6000] + '…'
+
     char_count = sum(len(m['content']) for m in msgs)
     return compressed, recent_full, len(msgs), char_count
 
@@ -693,6 +696,7 @@ async def voice_ws(ws: WebSocket) -> None:
             "threshold": pipeline.wakeword.threshold,
             "models": pipeline.wakeword.models,
             "available": pipeline.wakeword.available,
+            "active_window_ms": int(pipeline.wakeword_active_window_s * 1000),
         },
     })
 
@@ -846,6 +850,11 @@ async def voice_ws(ws: WebSocket) -> None:
                         threshold=ww.get("threshold"),
                         models=ww.get("models"),
                     )
+                    if ww.get("active_window_ms") is not None:
+                        try:
+                            pipeline.wakeword_active_window_s = max(1.0, float(ww.get("active_window_ms")) / 1000.0)
+                        except Exception:
+                            pass
                 if "vad" in payload:
                     vad = payload["vad"]
                     if "energy_threshold" in vad:
@@ -864,11 +873,12 @@ async def voice_ws(ws: WebSocket) -> None:
                         "min_speech_ms": pipeline.vad_config.min_speech_ms,
                     },
                     "wakeword": {
-                        "enabled": pipeline.wakeword.enabled,
-                        "threshold": pipeline.wakeword.threshold,
-                        "models": pipeline.wakeword.models,
-                        "available": pipeline.wakeword.available,
-                    },
+            "enabled": pipeline.wakeword.enabled,
+            "threshold": pipeline.wakeword.threshold,
+            "models": pipeline.wakeword.models,
+            "available": pipeline.wakeword.available,
+            "active_window_ms": int(pipeline.wakeword_active_window_s * 1000),
+        },
                 })
 
     except WebSocketDisconnect:

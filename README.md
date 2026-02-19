@@ -19,6 +19,11 @@ Ensure `.env` contains your `HF_TOKEN` for HuggingFace downloads and `OPENROUTER
 
 Wakeword (default-on) uses OpenWakeWord (`hey jarvis`). If `openwakeword` is missing, proxy falls back gracefully to VAD-only mode.
 
+Voice runtime behavior (frontend):
+- Mic stream auto-starts on connect to enable wakeword detection (no manual record button).
+- After wakeword or speech, the mic stays active for a configurable window (default 10s).
+- If no clear speech is detected within the window, the mic returns to idle and requires wakeword again.
+
 ### Download GGUF assets
 ```bash
 mkdir -p models/lfm-audio runners

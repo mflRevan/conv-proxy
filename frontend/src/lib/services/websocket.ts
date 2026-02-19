@@ -3,7 +3,9 @@ import { conversation, generateMessageId } from '../stores/conversation';
 import { audio } from '../stores/audio';
 import { get } from 'svelte/store';
 import { audioPlayer } from './audioPlayer';
+import { audioRecorder } from './audioRecorder';
 import { agentPanel, nextAgentId } from '../stores/agent';
+import { settings } from '../stores/settings';
 
 const WS_URL = `ws://${window.location.host}/ws/voice`;
 const BASE_RECONNECT_DELAY = 800;
@@ -13,6 +15,7 @@ const MAX_RECONNECT_ATTEMPTS = 12;
 let ws: WebSocket | null = null;
 let reconnectTimeout: number | null = null;
 let dispatchTimer: number | null = null;
+let wakewordTimeout: number | null = null;
 
 function clearDispatchCountdown() {
   if (dispatchTimer) {
@@ -34,6 +37,27 @@ function startDispatchCountdown(seconds = 10) {
     }
     agentPanel.update(s => ({ ...s, dispatchCountdown: remaining }));
   }, 1000);
+}
+
+function clearWakewordTimer() {
+  if (wakewordTimeout) {
+    clearTimeout(wakewordTimeout);
+    wakewordTimeout = null;
+  }
+}
+
+function armWakeword(windowMs: number, pulse = false) {
+  clearWakewordTimer();
+  audio.update(s => ({ ...s, wakewordActive: true, wakewordPulse: pulse ? s.wakewordPulse + 1 : s.wakewordPulse }));
+  wakewordTimeout = window.setTimeout(() => {
+    audio.update(s => ({ ...s, wakewordActive: false, micState: 'idle', isVadActive: false }));
+    wakewordTimeout = null;
+  }, Math.max(1000, windowMs));
+}
+
+function disarmWakeword() {
+  clearWakewordTimer();
+  audio.update(s => ({ ...s, wakewordActive: false }));
 }
 
 function reconnectDelayMs(attempt: number): number {
@@ -79,6 +103,9 @@ export function connect() {
           }));
         })
         .catch(() => {});
+
+      // Auto-start mic stream for wakeword listening
+      audioRecorder.start();
     };
 
     ws.onmessage = (event) => {
@@ -102,6 +129,7 @@ export function connect() {
       }));
 
       audioPlayer.stop();
+      audioRecorder.stop();
       clearDispatchCountdown();
 
       const s = get(connection);
@@ -159,13 +187,27 @@ function handleMessage(msg: any) {
       }
       break;
 
-    case 'vad':
-      audio.update(s => ({ ...s, isVadActive: msg.event === 'speech_start' || msg.event === 'barge_in' }));
+    case 'vad': {
+      const windowMs = get(settings).wakewordActiveWindowMs || 15000;
+
+      if (msg.event === 'wakeword') {
+        audio.update(s => ({ ...s, isVadActive: false }));
+        audioPlayer.playChime();
+        armWakeword(windowMs, true);
+      }
+
       if (msg.event === 'speech_start' || msg.event === 'barge_in') {
+        audio.update(s => ({ ...s, isVadActive: true }));
+        disarmWakeword();
+        audio.update(s => ({ ...s, wakewordActive: true }));
         audioPlayer.stop();
         cancelGeneration();
+      } else if (msg.event === 'speech_end') {
+        audio.update(s => ({ ...s, isVadActive: false }));
+        armWakeword(windowMs, false);
       }
       break;
+    }
 
     case 'transcription':
       audio.update(state => ({

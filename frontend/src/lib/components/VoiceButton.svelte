@@ -3,26 +3,33 @@
   import { audioRecorder } from '../services/audioRecorder';
 
   function handleClick() {
-    if ($audio.micState === 'idle') {
+    if (!$audio.streaming) {
       audioRecorder.start();
-    } else if ($audio.micState === 'listening') {
+    } else {
       audioRecorder.stop();
     }
   }
 
-  $: isListening = $audio.micState === 'listening';
+  $: isListening = $audio.micState === 'listening' || $audio.wakewordActive;
   $: isProcessing = $audio.micState === 'processing';
   $: disabled = isProcessing;
+  $: isStreaming = $audio.streaming;
 </script>
 
 <button 
   class="voice-button" 
   class:listening={isListening}
   class:processing={isProcessing}
+  class:armed={$audio.wakewordActive}
+  class:streaming={isStreaming}
   on:click={handleClick}
   {disabled}
-  aria-label={isListening ? 'Stop recording' : 'Start recording'}
+  aria-label={isStreaming ? 'Stop microphone' : 'Start microphone'}
 >
+  {#key $audio.wakewordPulse}
+    <div class="wakeword-flash"></div>
+  {/key}
+
   <div class="icon-wrapper">
     {#if isProcessing}
       <div class="processing-spinner"></div>
@@ -83,6 +90,26 @@
 
   .voice-button.processing {
     background: linear-gradient(135deg, #ca8a04 0%, #eab308 100%);
+  }
+
+  .voice-button.armed:not(.processing) {
+    box-shadow: 0 0 22px rgba(56, 189, 248, 0.4), 0 0 0 6px rgba(56, 189, 248, 0.1);
+  }
+
+  .wakeword-flash {
+    position: absolute;
+    inset: -10%;
+    border-radius: 50%;
+    border: 2px solid rgba(56, 189, 248, 0.7);
+    box-shadow: 0 0 24px rgba(56, 189, 248, 0.6);
+    animation: wakeword-flash 1.1s ease-out forwards;
+    pointer-events: none;
+  }
+
+  @keyframes wakeword-flash {
+    0% { transform: scale(0.7); opacity: 0.9; }
+    70% { transform: scale(1.2); opacity: 0.35; }
+    100% { transform: scale(1.6); opacity: 0; }
   }
 
   .icon-wrapper {
