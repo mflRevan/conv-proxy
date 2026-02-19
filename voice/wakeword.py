@@ -24,10 +24,19 @@ class WakewordDetector:
     def _init_model(self):
         try:
             from openwakeword import Model
+            from openwakeword.utils import download_models
             try:
-                self._model = Model(wakeword_models=self.models)
+                self._model = Model(wakeword_models=self.models, inference_framework="onnx")
             except Exception:
-                self._model = Model()
+                # common on fresh installs: model files absent
+                try:
+                    download_models()
+                except Exception:
+                    pass
+                try:
+                    self._model = Model(wakeword_models=self.models, inference_framework="onnx")
+                except Exception:
+                    self._model = Model(inference_framework="onnx")
             self._available = True
             log.info("Wakeword detector loaded (models=%s)", self.models)
         except Exception as e:
