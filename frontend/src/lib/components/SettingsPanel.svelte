@@ -11,6 +11,7 @@
 
   let bridgeSessionId = "";
   let bridgeConfigured = false;
+  let bridgeDispatchEnabled = false;
 
   async function refreshBridge() {
     try {
@@ -18,6 +19,7 @@
       const data = await res.json();
       bridgeSessionId = data.session_id || "";
       bridgeConfigured = !!data.configured;
+      bridgeDispatchEnabled = !!data.dispatch_enabled;
     } catch {}
   }
 
@@ -25,7 +27,22 @@
     await fetch('/api/bridge/bind', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: bridgeSessionId.trim() }),
+      body: JSON.stringify({ session_id: bridgeSessionId.trim(), dispatch_enabled: bridgeDispatchEnabled }),
+    });
+    await refreshBridge();
+  }
+
+  async function bindMainSession() {
+    await fetch('/api/bridge/bind-main', { method: 'POST' });
+    await refreshBridge();
+  }
+
+  async function setDispatchEnabled(enabled: boolean) {
+    bridgeDispatchEnabled = enabled;
+    await fetch('/api/bridge/dispatch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
     });
     await refreshBridge();
   }
@@ -154,7 +171,15 @@
             <input id="bridge-session" type="text" bind:value={bridgeSessionId} placeholder="OpenClaw session id" />
             <button class="mini-btn" on:click={bindBridge}>Bind</button>
           </div>
-          <p class="hint">Status: {bridgeConfigured ? 'connected' : 'not bound'}</p>
+          <p class="hint">Status: {bridgeConfigured ? 'connected' : 'not bound'} · dispatch {bridgeDispatchEnabled ? 'on' : 'safe/off'}</p>
+          <div class="bridge-row" style="margin-top:8px;">
+            <button class="mini-btn" on:click={bindMainSession}>Bind Main Session</button>
+            <label class="toggle-label compact">
+              <input type="checkbox" checked={bridgeDispatchEnabled} on:change={(e) => setDispatchEnabled((e.currentTarget as HTMLInputElement).checked)} />
+              <span>Live dispatch</span>
+            </label>
+          </div>
+
         </div>
 
         <div class="setting-group">
@@ -362,6 +387,11 @@
     color: #e2e8f0;
     font-size: 0.9rem;
   }
+  .toggle-label.compact { padding: 8px 10px; gap: 8px; }
+  .toggle-label.compact input[type="checkbox"] { width: 36px; height: 20px; }
+  .toggle-label.compact input[type="checkbox"]::before { width: 14px; height: 14px; top:3px; left:3px; }
+  .toggle-label.compact input[type="checkbox"]:checked::before { left: 19px; }
+  .toggle-label.compact span { font-size: .8rem; }
 
   .slider-group {
     display: flex;

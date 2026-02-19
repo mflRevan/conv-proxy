@@ -25,6 +25,9 @@ export interface AgentPanelState {
   dispatchCountdown: number | null;
   bridgeConfigured: boolean;
   bridgeSessionId: string;
+  dispatchEnabled: boolean;
+  contextMessages: number;
+  contextChars: number;
   pulseToken: number;
 }
 
@@ -37,6 +40,9 @@ const initial: AgentPanelState = {
   dispatchCountdown: null,
   bridgeConfigured: false,
   bridgeSessionId: '',
+  dispatchEnabled: false,
+  contextMessages: 0,
+  contextChars: 0,
   pulseToken: 0,
 };
 

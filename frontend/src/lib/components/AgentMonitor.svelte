@@ -32,10 +32,12 @@
   <header>
     <h3>Main Agent</h3>
     <div class="head-right">
-      <span class="bridge" class:on={$agentPanel.bridgeConfigured}>{$agentPanel.bridgeConfigured ? 'linked' : 'mock/offline'}</span>
+      <span class="bridge" class:on={$agentPanel.bridgeConfigured}>{$agentPanel.bridgeConfigured ? ($agentPanel.dispatchEnabled ? 'live' : 'linked-safe') : 'mock/offline'}</span>
       <span class="badge" class:busy={$agentPanel.status === 'busy'}>{stateLabel[$agentPanel.status] || $agentPanel.status}</span>
     </div>
   </header>
+
+  <div class="ctx-meta">ctx {$agentPanel.contextMessages} msgs · {Math.max(1, Math.round($agentPanel.contextChars / 1000))}k chars</div>
 
   <div class="now-card" class:active={$agentPanel.status === 'busy'}>
     <div class="pulse"></div>
@@ -87,6 +89,8 @@
   h3 { margin:0; font-size:1.02rem; color:#e2e8f0; }
   .badge { font-size:.72rem; padding:5px 10px; border-radius:999px; background:#334155; color:#cbd5e1; }
   .badge.busy { background:#0f766e; color:#99f6e4; }
+
+  .ctx-meta { font-size:.68rem; color:#93c5fd; opacity:.9; }
 
   .now-card {
     position: relative;

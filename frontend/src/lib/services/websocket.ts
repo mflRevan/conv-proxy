@@ -73,6 +73,9 @@ export function connect() {
             ...s,
             bridgeConfigured: !!data.configured,
             bridgeSessionId: data.session_id || '',
+            dispatchEnabled: !!data.dispatch_enabled || false,
+            contextMessages: Number(data.context_messages || 0),
+            contextChars: Number(data.context_chars || 0),
           }));
         })
         .catch(() => {});
@@ -138,6 +141,9 @@ function handleMessage(msg: any) {
         queuedTask: msg.queued_task || s.queuedTask,
         bridgeConfigured: !!msg.bridge?.configured || s.bridgeConfigured,
         bridgeSessionId: msg.bridge?.session_id || s.bridgeSessionId,
+        dispatchEnabled: !!msg.bridge?.dispatch_enabled || s.dispatchEnabled,
+        contextMessages: Number(msg.bridge?.context_messages || s.contextMessages || 0),
+        contextChars: Number(msg.bridge?.context_chars || s.contextChars || 0),
       }));
       break;
 
@@ -279,11 +285,16 @@ function handleMessage(msg: any) {
       clearDispatchCountdown();
       agentPanel.update(s => ({ ...s, queuedTask: msg.task || s.queuedTask, pulseToken: Date.now() }));
       break;
+
+    case 'context_size':
+      agentPanel.update(s => ({ ...s, contextMessages: Number(msg.messages || 0), contextChars: Number(msg.chars || 0) }));
+      break;
     case 'bridge_status':
       agentPanel.update(s => ({
         ...s,
         bridgeConfigured: !!msg.configured,
         bridgeSessionId: msg.session_id || '',
+        dispatchEnabled: !!msg.dispatch_enabled || false,
       }));
       break;
 
@@ -320,6 +331,9 @@ function handleMessage(msg: any) {
         queuedTask: msg.queued_task ?? s.queuedTask,
         bridgeConfigured: !!msg.bridge?.configured || s.bridgeConfigured,
         bridgeSessionId: msg.bridge?.session_id || s.bridgeSessionId,
+        dispatchEnabled: !!msg.bridge?.dispatch_enabled || s.dispatchEnabled,
+        contextMessages: Number(msg.bridge?.context_messages || s.contextMessages || 0),
+        contextChars: Number(msg.bridge?.context_chars || s.contextChars || 0),
       }));
       if (msg.queued_task && msg.agent_status === 'idle') {
         startDispatchCountdown(10);

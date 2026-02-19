@@ -76,6 +76,105 @@ if not _bridge_session_id and _BRIDGE_FILE.exists():
     _bridge_session_id = _BRIDGE_FILE.read_text(encoding='utf-8').strip()
 _bridge_last_result: str = ''
 _bridge_last_error: str = ''
+_bridge_dispatch_enabled: bool = False
+_bridge_context_size_chars: int = 0
+_bridge_context_size_messages: int = 0
+
+
+
+
+def _load_session_context(session_id: str) -> tuple[str, list[dict], int, int]:
+    """Load structured context from OpenClaw transcript JSONL (user/assistant only)."""
+    if not session_id:
+        return "", [], 0, 0
+
+    candidates = [
+        ROOT.parent / f"{session_id}.jsonl",
+        Path.home() / ".openclaw" / "agents" / "main" / "sessions" / f"{session_id}.jsonl",
+    ]
+    transcript = next((c for c in candidates if c.exists()), None)
+    if transcript is None:
+        return "", [], 0, 0
+
+    msgs: list[dict] = []
+    try:
+        with transcript.open('r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if row.get('type') == 'message' and isinstance(row.get('message'), dict):
+                    m = row.get('message') or {}
+                    role = m.get('role')
+                    content = m.get('content', '')
+                else:
+                    role = row.get('role')
+                    content = row.get('content', '')
+
+                if role not in ('user', 'assistant'):
+                    continue
+                if isinstance(content, list):
+                    parts = []
+                    for c in content:
+                        if isinstance(c, dict):
+                            t = c.get('text') or c.get('content') or ''
+                            if t:
+                                parts.append(str(t))
+                        elif isinstance(c, str):
+                            parts.append(c)
+                    text = '\n'.join(parts).strip()
+                else:
+                    text = str(content or '').strip()
+                if text:
+                    msgs.append({'role': role, 'content': text})
+    except Exception:
+        return "", [], 0, 0
+
+    if not msgs:
+        return "", [], 0, 0
+
+    recent_full = msgs[-10:]
+    older = msgs[:-10]
+    older_compact = []
+    for m in older[-80:]:
+        snippet = m['content'].replace('\n', ' ').strip()
+        if len(snippet) > 180:
+            snippet = snippet[:180] + '…'
+        older_compact.append(f"[{m['role']}] {snippet}")
+
+    compressed = ''
+    if older_compact:
+        compressed = 'Earlier compressed history:\n' + '\n'.join(older_compact)
+
+    char_count = sum(len(m['content']) for m in msgs)
+    return compressed, recent_full, len(msgs), char_count
+
+
+async def _sync_bridge_context_once():
+    global _bridge_context_size_chars, _bridge_context_size_messages
+    if not _bridge_session_id:
+        return
+
+    compressed, turns, msg_count, char_count = _load_session_context(_bridge_session_id)
+    _bridge_context_size_chars = char_count
+    _bridge_context_size_messages = msg_count
+
+    _proxy.update_agent_context(
+        status=_proxy.state.agent_status,
+        current_task=_proxy.state.agent_current_task,
+        turns=turns,
+        compressed_context=compressed,
+    )
+
+    await _broadcast({
+        'type': 'context_size',
+        'messages': _bridge_context_size_messages,
+        'chars': _bridge_context_size_chars,
+    })
 
 
 async def _broadcast(msg: dict):
@@ -104,6 +203,25 @@ def decode_wav_bytes(payload: bytes) -> tuple[np.ndarray, int]:
     if audio.ndim > 1:
         audio = np.mean(audio, axis=1)
     return audio, sr
+
+
+
+
+async def _resolve_main_session_id() -> str:
+    cmd = ["openclaw", "sessions", "--json"]
+    try:
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return ""
+        data = json.loads(out.decode('utf-8', errors='ignore') or '{}')
+        sessions = data.get('sessions') or []
+        for s in sessions:
+            if s.get('key') == 'agent:main:main' and s.get('sessionId'):
+                return str(s['sessionId'])
+        return ""
+    except Exception:
+        return ""
 
 
 async def _dispatch_to_openclaw_session(task_text: str) -> tuple[bool, str]:
@@ -183,6 +301,9 @@ def bridge_status() -> JSONResponse:
     return JSONResponse({
         "session_id": _bridge_session_id,
         "configured": bool(_bridge_session_id),
+        "dispatch_enabled": _bridge_dispatch_enabled,
+        "context_messages": _bridge_context_size_messages,
+        "context_chars": _bridge_context_size_chars,
         "last_result": _bridge_last_result,
         "last_error": _bridge_last_error,
     })
@@ -190,18 +311,40 @@ def bridge_status() -> JSONResponse:
 
 @app.post("/api/bridge/bind")
 async def bridge_bind(body: dict) -> JSONResponse:
-    global _bridge_session_id, _bridge_last_error, _bridge_last_result
+    global _bridge_session_id, _bridge_last_error, _bridge_last_result, _bridge_dispatch_enabled
     sid = str(body.get("session_id", "")).strip()
     _bridge_session_id = sid
     _bridge_last_error = ""
     _bridge_last_result = ""
+    if "dispatch_enabled" in body:
+        _bridge_dispatch_enabled = bool(body.get("dispatch_enabled"))
     try:
         _BRIDGE_FILE.write_text(_bridge_session_id, encoding="utf-8")
     except Exception:
         pass
-    await _broadcast({"type": "bridge_status", "configured": bool(_bridge_session_id), "session_id": _bridge_session_id})
-    return JSONResponse({"ok": True, "session_id": _bridge_session_id, "configured": bool(_bridge_session_id)})
+    await _sync_bridge_context_once()
+    await _broadcast({"type": "bridge_status", "configured": bool(_bridge_session_id), "session_id": _bridge_session_id, "dispatch_enabled": _bridge_dispatch_enabled})
+    return JSONResponse({"ok": True, "session_id": _bridge_session_id, "configured": bool(_bridge_session_id), "dispatch_enabled": _bridge_dispatch_enabled})
 
+
+
+
+@app.post("/api/bridge/dispatch")
+async def bridge_dispatch_toggle(body: dict) -> JSONResponse:
+    global _bridge_dispatch_enabled
+    _bridge_dispatch_enabled = bool(body.get('enabled', False))
+    await _broadcast({'type': 'bridge_status', 'configured': bool(_bridge_session_id), 'session_id': _bridge_session_id, 'dispatch_enabled': _bridge_dispatch_enabled})
+    return JSONResponse({'ok': True, 'dispatch_enabled': _bridge_dispatch_enabled})
+
+
+
+@app.post("/api/bridge/bind-main")
+async def bridge_bind_main() -> JSONResponse:
+    sid = await _resolve_main_session_id()
+    if not sid:
+        return JSONResponse({'ok': False, 'error': 'main session not found'}, status_code=404)
+    body = {'session_id': sid, 'dispatch_enabled': False}
+    return await bridge_bind(body)
 
 @app.post("/api/agent-context")
 async def update_agent_context(body: dict) -> JSONResponse:
@@ -339,7 +482,7 @@ async def chat_ws(ws: WebSocket) -> None:
         "agent_status": _proxy.state.agent_status,
         "task_draft": _proxy.state.scratchpad_task,
         "queued_task": _proxy.state.queued_task,
-        "bridge": {"configured": bool(_bridge_session_id), "session_id": _bridge_session_id},
+        "bridge": {"configured": bool(_bridge_session_id), "session_id": _bridge_session_id, "dispatch_enabled": _bridge_dispatch_enabled, "context_messages": _bridge_context_size_messages, "context_chars": _bridge_context_size_chars},
     }))
 
     loop = asyncio.get_event_loop()
@@ -538,7 +681,7 @@ async def voice_ws(ws: WebSocket) -> None:
         "agent_status": _proxy.state.agent_status,
         "task_draft": _proxy.state.scratchpad_task,
         "queued_task": _proxy.state.queued_task,
-        "bridge": {"configured": bool(_bridge_session_id), "session_id": _bridge_session_id},
+        "bridge": {"configured": bool(_bridge_session_id), "session_id": _bridge_session_id, "dispatch_enabled": _bridge_dispatch_enabled, "context_messages": _bridge_context_size_messages, "context_chars": _bridge_context_size_chars},
         "stt_backend": pipeline.stt_backend,
         "vad_config": {
             "energy_threshold": pipeline.vad_config.energy_threshold,
@@ -717,6 +860,16 @@ async def voice_ws(ws: WebSocket) -> None:
 
 
 # ─── Dispatch timer (background task) ───
+
+
+async def _bridge_context_loop():
+    while True:
+        await asyncio.sleep(6)
+        try:
+            await _sync_bridge_context_once()
+        except Exception:
+            pass
+
 async def _dispatch_loop():
     """Periodically check if queued task should be dispatched."""
     while True:
@@ -728,7 +881,7 @@ async def _dispatch_loop():
         await _broadcast({"type": "dispatch_ready", "task": task})
 
         # Optional direct bridge: dispatch into a bound OpenClaw session.
-        if _bridge_session_id:
+        if _bridge_session_id and _bridge_dispatch_enabled:
             _proxy.update_agent_context(status="busy", current_task="Dispatching queued task to OpenClaw session")
             await _broadcast({"type": "agent_status", "status": "busy", "current_task": _proxy.state.agent_current_task})
             ok, result = await _dispatch_to_openclaw_session(task)
@@ -748,3 +901,4 @@ async def _dispatch_loop():
 @app.on_event("startup")
 async def _startup():
     asyncio.create_task(_dispatch_loop())
+    asyncio.create_task(_bridge_context_loop())
