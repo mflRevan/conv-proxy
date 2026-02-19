@@ -19,6 +19,7 @@ import os
 import sys
 import time
 import threading
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional, Any
@@ -77,6 +78,11 @@ if not _bridge_session_id and _BRIDGE_FILE.exists():
 _bridge_last_result: str = ''
 _bridge_last_error: str = ''
 _bridge_dispatch_enabled: bool = False
+
+_bridge_last_line_idx: int = 0
+_bridge_pending_tools: int = 0
+_bridge_last_status: str = 'idle'
+_bridge_last_task: str = ''
 _bridge_context_size_chars: int = 0
 _bridge_context_size_messages: int = 0
 
@@ -115,7 +121,7 @@ def _load_session_context(session_id: str) -> tuple[str, list[dict], int, int]:
                     role = row.get('role')
                     content = row.get('content', '')
 
-                if role not in ('user', 'assistant'):
+                if role not in ('user', 'assistant', 'toolResult', 'tool'):
                     continue
                 if isinstance(content, list):
                     parts = []
@@ -130,6 +136,13 @@ def _load_session_context(session_id: str) -> tuple[str, list[dict], int, int]:
                 else:
                     text = str(content or '').strip()
                 if text:
+                    if role in ('toolResult', 'tool'):
+                        tool_name = ''
+                        if isinstance(row.get('message'), dict):
+                            tool_name = row.get('message', {}).get('toolName') or row.get('message', {}).get('tool_call_name') or ''
+                        if tool_name:
+                            text = f"[tool:{tool_name}] {text}"
+                        role = 'assistant'
                     msgs.append({'role': role, 'content': text})
     except Exception:
         return "", [], 0, 0
@@ -179,6 +192,91 @@ async def _sync_bridge_context_once():
         'chars': _bridge_context_size_chars,
     })
 
+    await _emit_bridge_events()
+
+
+
+
+async def _emit_bridge_events():
+    global _bridge_last_line_idx, _bridge_pending_tools, _bridge_last_status, _bridge_last_task
+    if not _bridge_session_id:
+        return
+    candidates = [
+        ROOT.parent / f"{_bridge_session_id}.jsonl",
+        Path.home() / ".openclaw" / "agents" / "main" / "sessions" / f"{_bridge_session_id}.jsonl",
+    ]
+    transcript = next((c for c in candidates if c.exists()), None)
+    if transcript is None:
+        return
+
+    try:
+        lines = transcript.read_text(encoding='utf-8', errors='ignore').splitlines()
+    except Exception:
+        return
+
+    if _bridge_last_line_idx > len(lines):
+        _bridge_last_line_idx = 0
+
+    new_lines = lines[_bridge_last_line_idx:]
+    _bridge_last_line_idx = len(lines)
+
+    tool_calls = []
+    tool_results = []
+
+    for ln in new_lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            row = json.loads(ln)
+        except Exception:
+            continue
+        if row.get('type') == 'message' and isinstance(row.get('message'), dict):
+            msg = row.get('message') or {}
+            role = msg.get('role')
+            content = msg.get('content')
+            if role == 'toolResult':
+                tool_name = msg.get('toolName') or ''
+                text = ''
+                if isinstance(content, list):
+                    parts = []
+                    for c in content:
+                        if isinstance(c, dict):
+                            t = c.get('text') or c.get('content') or ''
+                            if t:
+                                parts.append(str(t))
+                        elif isinstance(c, str):
+                            parts.append(c)
+                    text = '\n'.join(parts).strip()
+                else:
+                    text = str(content or '').strip()
+                if text:
+                    tool_results.append({'tool': tool_name or 'tool', 'content': text})
+            elif role == 'assistant' and isinstance(content, list):
+                for c in content:
+                    if isinstance(c, dict) and c.get('type') == 'toolCall':
+                        tool_calls.append({'tool': c.get('name') or 'tool', 'task': c.get('arguments') or ''})
+
+    for tc in tool_calls:
+        _bridge_pending_tools += 1
+        _bridge_last_task = tc.get('tool') or _bridge_last_task
+        await _broadcast({'type': 'tool_called', 'tool': tc.get('tool'), 'task': tc.get('task', '')})
+
+    for tr in tool_results:
+        if _bridge_pending_tools > 0:
+            _bridge_pending_tools -= 1
+        await _broadcast({
+            'type': 'agent_progress',
+            'state': 'running',
+            'title': f"Tool result: {tr.get('tool')}",
+            'content': (tr.get('content') or '')[:1200],
+            'progress': 60,
+        })
+
+    new_status = 'busy' if _bridge_pending_tools > 0 else 'idle'
+    if new_status != _bridge_last_status:
+        _bridge_last_status = new_status
+        await _broadcast({'type': 'agent_status', 'status': new_status, 'current_task': _bridge_last_task if new_status == 'busy' else ''})
 
 async def _broadcast(msg: dict):
     payload = json.dumps(msg)
@@ -192,6 +290,28 @@ async def _broadcast(msg: dict):
         _chat_clients.discard(ws)
         _voice_clients.discard(ws)
 
+
+
+
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_MD_CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```", re.MULTILINE)
+_MD_INLINE_CODE_RE = re.compile(r"`([^`]+)`")
+
+
+def strip_markdown(text: str) -> str:
+    if not text:
+        return ''
+    s = _MD_CODE_BLOCK_RE.sub(' ', text)
+    s = _MD_LINK_RE.sub(r"\1", s)
+    s = _MD_INLINE_CODE_RE.sub(r"\1", s)
+    # headings, emphasis, lists, blockquotes
+    s = re.sub(r"^#{1,6}\s*", '', s, flags=re.MULTILINE)
+    s = re.sub(r"^[\-*+]\s+", '', s, flags=re.MULTILINE)
+    s = re.sub(r"^\d+\.\s+", '', s, flags=re.MULTILINE)
+    s = re.sub(r"^>\s?", '', s, flags=re.MULTILINE)
+    s = s.replace('**', '').replace('__', '').replace('*', '').replace('_', '')
+    s = s.replace('~~', '')
+    return re.sub(r"\s+", ' ', s).strip()
 
 def pcm16_base64(audio: np.ndarray) -> str:
     if audio.size == 0:
@@ -458,7 +578,8 @@ async def chat_http(request: ChatRequest) -> JSONResponse:
             t0 = time.monotonic()
             ttfa = None
             chunks = []
-            for a in _tts.synthesize_streaming(result["reply"], strategy="sentence"):
+            tts_text = strip_markdown(result["reply"])
+            for a in _tts.synthesize_streaming(tts_text, strategy="sentence"):
                 if ttfa is None:
                     ttfa = (time.monotonic() - t0) * 1000
                 chunks.append(pcm16_base64(a))
@@ -592,6 +713,7 @@ async def chat_ws(ws: WebSocket) -> None:
             # ─── TTS ───
             if want_tts and response_text and not tts_cancelled and not cancel_event.is_set():
                 def _do_tts(rt=response_text, ce=cancel_event):
+                    rt = strip_markdown(rt)
                     t0 = time.monotonic()
                     ttfa = None
                     out = []
@@ -764,7 +886,8 @@ async def voice_ws(ws: WebSocket) -> None:
             
             def _do_tts():
                 chunks = []
-                for b64, sr, is_first in pipeline.synthesize_streaming(response_text):
+                tts_text = strip_markdown(response_text)
+                for b64, sr, is_first in pipeline.synthesize_streaming(tts_text):
                     if cancel_event.is_set():
                         return chunks, True
                     chunks.append((b64, sr, is_first))

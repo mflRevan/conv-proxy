@@ -1,6 +1,8 @@
 <script lang="ts">
   import { conversation } from '../stores/conversation';
   import { afterUpdate } from 'svelte';
+  import { marked } from 'marked';
+  import DOMPurify from 'dompurify';
 
   let containerEl: HTMLDivElement;
   let shouldAutoScroll = true;
@@ -10,6 +12,12 @@
       containerEl.scrollTop = containerEl.scrollHeight;
     }
   });
+
+
+  function renderMarkdown(src: string) {
+    const raw = marked.parse(src || '', { breaks: true }) as string;
+    return DOMPurify.sanitize(raw);
+  }
 
   function handleScroll() {
     if (!containerEl) return;
@@ -51,7 +59,7 @@
                 <pre>{msg.reasoning}</pre>
               </details>
             {/if}
-            <p>{msg.content}</p>
+            <div class="markdown">{@html renderMarkdown(msg.content)}</div>
           </div>
         </div>
       {/each}
@@ -65,7 +73,7 @@
                 <pre>{$conversation.currentReasoning}</pre>
               </details>
             {/if}
-            <p>{$conversation.currentResponse}<span class="cursor">▊</span></p>
+            <div class="markdown streaming">{@html renderMarkdown($conversation.currentResponse)}<span class="cursor">▊</span></div>
           </div>
         </div>
       {/if}
@@ -170,10 +178,39 @@
     color: #e2e8f0;
   }
 
-  .message-content p {
-    margin: 0;
-    line-height: 1.6;
-    font-size: 1rem;
+  .markdown :global(p) { margin: 0 0 0.65rem; }
+  .markdown :global(p:last-child) { margin-bottom: 0; }
+  .markdown :global(ul),
+  .markdown :global(ol) { margin: 0.4rem 0 0.4rem 1.2rem; }
+  .markdown :global(li) { margin: 0.15rem 0; }
+  .markdown :global(code) {
+    background: rgba(15, 23, 42, 0.8);
+    padding: 0.15rem 0.35rem;
+    border-radius: 6px;
+    font-family: 'Monaco','Menlo',monospace;
+    font-size: 0.92rem;
+  }
+  .markdown :global(pre) {
+    background: rgba(2, 6, 23, 0.7);
+    border: 1px solid rgba(59,130,246,.2);
+    border-radius: 10px;
+    padding: 0.75rem;
+    overflow: auto;
+  }
+  .markdown :global(pre code) {
+    background: transparent;
+    padding: 0;
+    font-size: 0.9rem;
+  }
+  .markdown :global(blockquote) {
+    margin: 0.4rem 0;
+    padding-left: 0.75rem;
+    border-left: 3px solid rgba(59,130,246,.4);
+    color: #cbd5e1;
+  }
+  .markdown :global(a) {
+    color: #60a5fa;
+    text-decoration: underline;
   }
 
   .cursor {

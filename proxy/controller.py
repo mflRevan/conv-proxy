@@ -56,6 +56,37 @@ TOOLS = [
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "append_task_buffer",
+            "description": "Append markdown text to the scratchpad task buffer (preferred for incremental planning).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Markdown text to append."}
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "patch_task_buffer",
+            "description": "Patch the scratchpad task buffer by replacing a substring (controlled edit).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "find": {"type": "string", "description": "Exact text to find."},
+                    "replace": {"type": "string", "description": "Replacement text."},
+                    "count": {"type": "integer", "description": "Max replacements (default 1, 0=all)."}
+                },
+                "required": ["find", "replace"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -236,6 +267,34 @@ class ProxyController:
                 action = "buffer_cleared"
                 self.state.scratchpad_task = ""
 
+            elif fn_name == "append_task_buffer":
+                action = "buffer"
+                add_text = _normalize_task_text(fn_args.get("text", ""))
+                if add_text:
+                    if self.state.scratchpad_task:
+                        self.state.scratchpad_task += "\n" + add_text
+                    else:
+                        self.state.scratchpad_task = add_text
+                    if self.on_task_updated:
+                        self.on_task_updated(self.state.scratchpad_task)
+
+            elif fn_name == "patch_task_buffer":
+                action = "buffer"
+                find = fn_args.get("find", "") or ""
+                replace = fn_args.get("replace", "") or ""
+                count = fn_args.get("count", 1)
+                try:
+                    count = int(count)
+                except Exception:
+                    count = 1
+                if find and self.state.scratchpad_task:
+                    if count == 0:
+                        self.state.scratchpad_task = self.state.scratchpad_task.replace(find, replace)
+                    else:
+                        self.state.scratchpad_task = self.state.scratchpad_task.replace(find, replace, count)
+                    if self.on_task_updated:
+                        self.on_task_updated(self.state.scratchpad_task)
+
             elif fn_name == "queue_buffered_task":
                 if self.state.scratchpad_task:
                     action = "queued"
@@ -308,6 +367,34 @@ class ProxyController:
                 elif fn_name == "clear_task_buffer":
                     self.state.scratchpad_task = ""
                     yield {"type": "action", "action": "buffer_cleared"}
+
+                elif fn_name == "append_task_buffer":
+                    add_text = _normalize_task_text(fn_args.get("text", ""))
+                    if add_text:
+                        if self.state.scratchpad_task:
+                            self.state.scratchpad_task += "\n" + add_text
+                        else:
+                            self.state.scratchpad_task = add_text
+                        if self.on_task_updated:
+                            self.on_task_updated(self.state.scratchpad_task)
+                    yield {"type": "action", "action": "buffer", "task": add_text}
+
+                elif fn_name == "patch_task_buffer":
+                    find = fn_args.get("find", "") or ""
+                    replace = fn_args.get("replace", "") or ""
+                    count = fn_args.get("count", 1)
+                    try:
+                        count = int(count)
+                    except Exception:
+                        count = 1
+                    if find and self.state.scratchpad_task:
+                        if count == 0:
+                            self.state.scratchpad_task = self.state.scratchpad_task.replace(find, replace)
+                        else:
+                            self.state.scratchpad_task = self.state.scratchpad_task.replace(find, replace, count)
+                        if self.on_task_updated:
+                            self.on_task_updated(self.state.scratchpad_task)
+                    yield {"type": "action", "action": "buffer", "task": self.state.scratchpad_task}
 
                 elif fn_name == "queue_buffered_task":
                     if self.state.scratchpad_task:
