@@ -161,6 +161,10 @@ function handleMessage(msg: any) {
 
     case 'vad':
       audio.update(s => ({ ...s, isVadActive: msg.event === 'speech_start' || msg.event === 'barge_in' }));
+      if (msg.event === 'speech_start' || msg.event === 'barge_in') {
+        audioPlayer.stop();
+        cancelGeneration();
+      }
       break;
 
     case 'transcription':
@@ -390,6 +394,11 @@ export function sendAudioChunk(base64Pcm16: string, sampleRate = 16000) {
 export function updateVoiceConfig(config: {
   stt_backend?: string;
   tts?: boolean;
+  wakeword?: {
+    enabled?: boolean;
+    threshold?: number;
+    models?: string[];
+  };
   vad?: {
     energy_threshold?: number;
     silence_duration_ms?: number;

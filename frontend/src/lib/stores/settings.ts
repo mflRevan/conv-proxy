@@ -6,6 +6,8 @@ export interface SettingsState {
   vadThreshold: number;
   silenceDurationMs: number;
   autoSend: boolean;
+  wakewordEnabled: boolean;
+  wakewordThreshold: number;
   showSettings: boolean;
 }
 
@@ -15,6 +17,8 @@ const defaultSettings: SettingsState = {
   vadThreshold: 0.5,
   silenceDurationMs: 800,
   autoSend: true,
+  wakewordEnabled: true,
+  wakewordThreshold: 0.55,
   showSettings: false,
 };
 

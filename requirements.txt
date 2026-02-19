@@ -14,3 +14,4 @@ python-multipart
 llama-cpp-python
 useful-moonshine-onnx
 moonshine
+openwakeword

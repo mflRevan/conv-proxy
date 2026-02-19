@@ -9,3 +9,6 @@ models/
 runners/
 lfm_server.log
 webapp/.bridge_session_id
+
+.convproxy.pid
+convproxy.log

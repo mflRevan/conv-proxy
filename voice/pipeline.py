@@ -26,6 +26,7 @@ import soundfile as sf
 
 from stt.engine import create_stt
 from tts.kokoro_streaming import KokoroStreamingTTS
+from voice.wakeword import WakewordDetector
 
 log = logging.getLogger(__name__)
 
@@ -67,11 +68,15 @@ class VoicePipeline:
     _speech_start: float = 0.0
     _cancel_event: Optional[threading.Event] = None
     _tts_cancel_event: Optional[threading.Event] = None
-    
+
+    # Wakeword gate
+    wakeword: WakewordDetector = field(default_factory=WakewordDetector)
+    _wakeword_active_until: float = 0.0
+
     # Callbacks (set by WebSocket handler)
     on_state_change: Optional[Callable[[PipelineState], None]] = None
     on_transcription: Optional[Callable[[str, bool], None]] = None  # (text, is_final)
-    on_vad_event: Optional[Callable[[str], None]] = None  # speech_start, speech_end
+    on_vad_event: Optional[Callable[[str], None]] = None  # speech_start, speech_end, wakeword
 
     def __post_init__(self):
         if self.tts_engine is None:
@@ -113,6 +118,17 @@ class VoicePipeline:
             if self.on_vad_event:
                 self.on_vad_event("barge_in")
             return "barge_in"
+
+        # ─── Wakeword gate in IDLE ───
+        if self.state == PipelineState.IDLE and self.wakeword.enabled:
+            armed = now < self._wakeword_active_until
+            if not armed and self.wakeword.detect(pcm_data, sample_rate=self.vad_config.sample_rate):
+                self._wakeword_active_until = now + 8.0
+                if self.on_vad_event:
+                    self.on_vad_event("wakeword")
+                armed = True
+            if not armed:
+                return None
 
         # ─── IDLE → LISTENING ───
         if self.state == PipelineState.IDLE and is_speech:
@@ -202,6 +218,7 @@ class VoicePipeline:
         self._audio_buffer.clear()
         self._silence_start = 0.0
         self._speech_start = 0.0
+        self._wakeword_active_until = 0.0
         self._set_state(PipelineState.IDLE)
 
     @property

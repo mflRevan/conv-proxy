@@ -15,7 +15,9 @@ source .venv-kokoro/bin/activate
 pip install -r requirements.txt
 ```
 
-Ensure `.env` contains your `HF_TOKEN` for HuggingFace downloads.
+Ensure `.env` contains your `HF_TOKEN` for HuggingFace downloads and `OPENROUTER_API_KEY` for proxy LLM calls.
+
+Wakeword (default-on) uses OpenWakeWord (`hey jarvis`). If `openwakeword` is missing, proxy falls back gracefully to VAD-only mode.
 
 ### Download GGUF assets
 ```bash
@@ -53,17 +55,29 @@ pip install useful-moonshine-onnx
 > **Note:** Browser Web Speech API only works over HTTPS or localhost.
 > On LAN (phone access via IP), it may not work unless you serve via HTTPS.
 
-## Usage
-Run the web UI:
+## Usage (production CLI)
+Use the new CLI wrapper (no `run.sh` required):
+
 ```bash
-./run.sh
-# Open http://localhost:37374
+cd conv-proxy
+python3 convproxy_cli.py onboard
+python3 convproxy_cli.py start
+python3 convproxy_cli.py status
+python3 convproxy_cli.py bind-main     # safe bind to main session (dispatch OFF)
+python3 convproxy_cli.py bridge-status
 ```
 
-Override defaults:
+Other useful commands:
 ```bash
-./run.sh --engine audio --port 37374 --stt whisper-tiny
+python3 convproxy_cli.py sessions       # list OpenClaw sessions
+python3 convproxy_cli.py agents         # list available agents
+python3 convproxy_cli.py bind <session_id> --dispatch   # live dispatch ON
+python3 convproxy_cli.py dispatch on|off
+python3 convproxy_cli.py monitor
+python3 convproxy_cli.py stop
 ```
+
+Frontend is served by FastAPI at `http://localhost:37374`.
 
 Available STT backends (depending on installed binaries/models):
 - whisper-tiny

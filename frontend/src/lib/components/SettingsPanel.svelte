@@ -166,6 +166,33 @@
         </div>
 
         <div class="setting-group">
+          <label class="toggle-label">
+            <input
+              type="checkbox"
+              bind:checked={$settings.wakewordEnabled}
+            />
+            <span>Wakeword activation (Hey Jarvis)</span>
+          </label>
+          <p class="hint">Requires "hey jarvis" before processing speech.</p>
+        </div>
+
+        <div class="setting-group">
+          <label for="wakeword-threshold">Wakeword Threshold</label>
+          <div class="slider-group">
+            <input
+              id="wakeword-threshold"
+              type="range"
+              min="0.2"
+              max="0.9"
+              step="0.05"
+              bind:value={$settings.wakewordThreshold}
+            />
+            <span class="slider-value">{Math.round($settings.wakewordThreshold * 100)}%</span>
+          </div>
+          <p class="hint">Higher = stricter wakeword detection.</p>
+        </div>
+
+        <div class="setting-group">
           <label for="bridge-session">Agent Bridge Session</label>
           <div class="bridge-row">
             <input id="bridge-session" type="text" bind:value={bridgeSessionId} placeholder="OpenClaw session id" />

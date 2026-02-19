@@ -82,6 +82,11 @@ class AudioRecorder {
       updateVoiceConfig({
         stt_backend: s.sttBackend,
         tts: s.ttsEnabled,
+        wakeword: {
+          enabled: s.wakewordEnabled,
+          threshold: s.wakewordThreshold,
+          models: ['hey jarvis'],
+        },
         vad: {
           energy_threshold: Math.max(0.005, s.vadThreshold * 0.04),
           silence_duration_ms: s.silenceDurationMs,

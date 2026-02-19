@@ -688,6 +688,12 @@ async def voice_ws(ws: WebSocket) -> None:
             "silence_duration_ms": pipeline.vad_config.silence_duration_ms,
             "min_speech_ms": pipeline.vad_config.min_speech_ms,
         },
+        "wakeword": {
+            "enabled": pipeline.wakeword.enabled,
+            "threshold": pipeline.wakeword.threshold,
+            "models": pipeline.wakeword.models,
+            "available": pipeline.wakeword.available,
+        },
     })
 
     async def run_response(text: str):
@@ -833,6 +839,13 @@ async def voice_ws(ws: WebSocket) -> None:
                         pipeline.stt_backend = requested
                 if "tts" in payload:
                     want_tts = bool(payload["tts"])
+                if "wakeword" in payload:
+                    ww = payload["wakeword"]
+                    pipeline.wakeword.set_config(
+                        enabled=ww.get("enabled"),
+                        threshold=ww.get("threshold"),
+                        models=ww.get("models"),
+                    )
                 if "vad" in payload:
                     vad = payload["vad"]
                     if "energy_threshold" in vad:
@@ -849,6 +862,12 @@ async def voice_ws(ws: WebSocket) -> None:
                         "energy_threshold": pipeline.vad_config.energy_threshold,
                         "silence_duration_ms": pipeline.vad_config.silence_duration_ms,
                         "min_speech_ms": pipeline.vad_config.min_speech_ms,
+                    },
+                    "wakeword": {
+                        "enabled": pipeline.wakeword.enabled,
+                        "threshold": pipeline.wakeword.threshold,
+                        "models": pipeline.wakeword.models,
+                        "available": pipeline.wakeword.available,
                     },
                 })
 
