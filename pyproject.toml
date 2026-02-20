@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clawproxy"
+version = "0.1.0"
+description = "OpenClaw Observer & Planner Client — sidecar voice interface and session monitor"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Aiman"}
+]
+
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "websockets>=12.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.25.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+voice = [
+    "numpy",
+    "torch",
+    "torchaudio",
+    "silero-vad",
+    "openwakeword",
+    "kokoro>=0.3.0",
+    "soundfile",
+]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[project.scripts]
+clawproxy = "cli:main"
+
+[tool.setuptools.packages.find]
+include = ["src*", "config*"]
+
+[tool.setuptools.package-data]
+config = ["*.md"]

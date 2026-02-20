@@ -3,16 +3,16 @@ import { writable, derived } from 'svelte/store';
 export interface ConnectionState {
   ws: WebSocket | null;
   status: 'disconnected' | 'connecting' | 'connected' | 'error';
-  model: string;
-  agentStatus: string;
+  gatewayState: 'disconnected' | 'connecting' | 'connected' | 'error' | 'disabled';
+  proxyModel: string;
   reconnectAttempts: number;
 }
 
 const initialState: ConnectionState = {
   ws: null,
   status: 'disconnected',
-  model: '',
-  agentStatus: 'idle',
+  gatewayState: 'disconnected',
+  proxyModel: '',
   reconnectAttempts: 0,
 };
 

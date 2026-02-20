@@ -1,6 +1,6 @@
 import { audio } from '../stores/audio';
 import { settings } from '../stores/settings';
-import { sendAudioChunk, cancelGeneration, updateVoiceConfig } from './websocket';
+import { sendAudioChunk, cancelGeneration, updateVoiceConfig } from './ws';
 import { get } from 'svelte/store';
 
 function floatToPcm16Base64(input: Float32Array): string {

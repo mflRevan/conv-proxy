@@ -1,31 +1,23 @@
 <script lang="ts">
   import { connection } from '../stores/connection';
-  import { audio } from '../stores/audio';
   import { settings } from '../stores/settings';
-  import { agentPanel } from '../stores/agent';
+  import { conversation } from '../stores/conversation';
 
-  $: statusColor = 
-    $connection.status === 'connected' ? '#10b981' :
-    $connection.status === 'connecting' ? '#eab308' :
-    $connection.status === 'error' ? '#ef4444' :
+  $: statusColor =
+    $connection.gatewayState === 'connected' ? '#14b8a6' :
+    $connection.gatewayState === 'connecting' ? '#eab308' :
+    $connection.gatewayState === 'error' ? '#ef4444' :
     '#64748b';
 
-  $: statusText = 
-    $connection.status === 'connected' ? 'Connected' :
-    $connection.status === 'connecting' ? 'Connecting...' :
-    $connection.status === 'error' ? 'Connection Error' :
-    'Disconnected';
-
-  $: activityText = 
-    $audio.speakerState === 'speaking' ? 'Speaking' :
-    $audio.micState === 'listening' ? 'Listening' :
-    $audio.micState === 'processing' ? 'Processing' :
-    $connection.agentStatus || 'Idle';
+  $: statusText =
+    $connection.gatewayState === 'connected' ? 'Gateway Connected' :
+    $connection.gatewayState === 'connecting' ? 'Gateway Connecting…' :
+    $connection.gatewayState === 'error' ? 'Gateway Error' :
+    'Gateway Disconnected';
 
   function toggleSettings() {
     settings.update(s => ({ ...s, showSettings: !s.showSettings }));
   }
-
 </script>
 
 <div class="status-bar">
@@ -35,11 +27,12 @@
   </div>
 
   <div class="info-group">
-    {#if $connection.model}
-      <span class="model-badge">{$connection.model}</span>
+    {#if $connection.proxyModel}
+      <span class="model-badge">{$connection.proxyModel}</span>
     {/if}
-    <span class="activity">{activityText}</span>
-    <span class="bridgeBadge" class:on={$agentPanel.bridgeConfigured}>{$agentPanel.bridgeConfigured ? "Agent linked" : "Mock/offline"}</span>
+    {#if $conversation.contextChars}
+      <span class="model-badge">CTX {Math.round($conversation.contextChars / 1000)}k</span>
+    {/if}
   </div>
 
   <div class="actions">
@@ -105,15 +98,6 @@
     font-weight: 500;
   }
 
-  .activity {
-    font-size: 0.875rem;
-    color: #94a3b8;
-    font-style: italic;
-  }
-
-  .bridgeBadge { font-size:.72rem; color:#94a3b8; border:1px solid rgba(148,163,184,.25); padding:3px 8px; border-radius:999px; }
-  .bridgeBadge.on { color:#86efac; border-color: rgba(74,222,128,.35); background: rgba(20,83,45,.25); }
-
   .actions { display:flex; align-items:center; gap:8px; }
 
   .settings-button {
@@ -141,17 +125,7 @@
   }
 
   @media (max-width: 768px) {
-    .status-bar {
-      padding: 12px 16px;
-      flex-wrap: wrap;
-    }
-
-    .info-group {
-      order: 3;
-      width: 100%;
-      justify-content: flex-start;
-      margin-top: 8px;
-    }
+    .status-bar { padding: 12px 16px; flex-wrap: wrap; }
+    .info-group { order: 3; width: 100%; justify-content: flex-start; margin-top: 8px; }
   }
 </style>
-

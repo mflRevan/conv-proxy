@@ -1,6 +1,15 @@
 import { writable } from 'svelte/store';
 
 export interface SettingsState {
+  proxyModel: string;
+  proxyTemperature: number;
+  proxyMaxTokens: number;
+  historyLength: number;
+  compressedContext: string;
+  compressedContextEnabled: boolean;
+  mainHistoryLength: number;
+  mainHistoryFullCount: number;
+
   sttBackend: string;
   ttsEnabled: boolean;
   vadThreshold: number;
@@ -9,11 +18,24 @@ export interface SettingsState {
   wakewordEnabled: boolean;
   wakewordThreshold: number;
   wakewordActiveWindowMs: number;
+
+  gatewayUrl: string;
+  gatewayToken: string;
+
   showSettings: boolean;
 }
 
 const defaultSettings: SettingsState = {
-  sttBackend: 'moonshine-tiny',
+  proxyModel: 'openai/gpt-oss-120b',
+  proxyTemperature: 0.3,
+  proxyMaxTokens: 300,
+  historyLength: 15,
+  compressedContext: '',
+  compressedContextEnabled: false,
+  mainHistoryLength: 20,
+  mainHistoryFullCount: 5,
+
+  sttBackend: 'whisper-small',
   ttsEnabled: true,
   vadThreshold: 0.5,
   silenceDurationMs: 800,
@@ -21,11 +43,14 @@ const defaultSettings: SettingsState = {
   wakewordEnabled: true,
   wakewordThreshold: 0.55,
   wakewordActiveWindowMs: 10000,
+
+  gatewayUrl: '',
+  gatewayToken: '',
+
   showSettings: false,
 };
 
-// Load from localStorage
-const stored = typeof localStorage !== 'undefined' 
+const stored = typeof localStorage !== 'undefined'
   ? localStorage.getItem('jarvis-settings')
   : null;
 
@@ -33,7 +58,6 @@ const initialSettings = stored ? { ...defaultSettings, ...JSON.parse(stored) } :
 
 export const settings = writable<SettingsState>(initialSettings);
 
-// Persist settings
 settings.subscribe(value => {
   if (typeof localStorage !== 'undefined') {
     const { showSettings, ...persistable } = value;

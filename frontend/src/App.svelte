@@ -1,18 +1,24 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { connect, disconnect } from './lib/services/websocket';
+  import { connect, disconnect } from './lib/services/ws';
 
   import StatusBar from './lib/components/StatusBar.svelte';
-  import ResponseDisplay from './lib/components/ResponseDisplay.svelte';
+  import ProxyChat from './lib/components/ProxyChat.svelte';
   import AudioVisualizer from './lib/components/AudioVisualizer.svelte';
   import VoiceButton from './lib/components/VoiceButton.svelte';
-  import TranscriptionDisplay from './lib/components/TranscriptionDisplay.svelte';
   import TaskDraft from './lib/components/TaskDraft.svelte';
   import AgentMonitor from './lib/components/AgentMonitor.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
+  import { audio } from './lib/stores/audio';
 
-  onMount(() => connect());
+  onMount(() => { connect(); });
   onDestroy(() => disconnect());
+
+  $: statusText =
+    $audio.speakerState === 'speaking' ? 'Speaking' :
+    $audio.micState === 'listening' ? 'Listening' :
+    $audio.micState === 'processing' ? 'Processing' :
+    'Idle';
 </script>
 
 <main class="app">
@@ -21,7 +27,7 @@
   <section class="hud">
     <section class="left-stage">
       <div class="chat-shell">
-        <ResponseDisplay />
+        <ProxyChat />
       </div>
 
       <div class="dock">
@@ -29,10 +35,14 @@
         <div class="viz-wrap">
           <AudioVisualizer />
         </div>
-      </div>
-
-      <div class="caption-slot">
-        <TranscriptionDisplay />
+        <div class="dock-status">
+          <div class="status">{statusText}</div>
+          {#if $audio.currentTranscription}
+            <div class="transcript">{$audio.currentTranscription}</div>
+          {:else}
+            <div class="hint">Awaiting voice input…</div>
+          {/if}
+        </div>
       </div>
     </section>
 
@@ -76,8 +86,8 @@
   .left-stage {
     min-height: 0;
     display: grid;
-    grid-template-rows: minmax(0,1fr) auto auto;
-    gap: 10px;
+    grid-template-rows: minmax(0,1fr) auto;
+    gap: 12px;
   }
 
   .chat-shell {
@@ -92,28 +102,46 @@
   }
 
   .dock {
-    display:flex;
+    display:grid;
+    grid-template-columns: auto minmax(140px, 1fr) minmax(160px, 1fr);
     align-items:center;
-    justify-content:center;
-    gap: 18px;
-    padding: 10px 14px;
+    gap: 16px;
+    padding: 12px 16px;
     border-radius: 14px;
     border: 1px solid rgba(59,130,246,.2);
     background: linear-gradient(180deg, rgba(15,23,42,.68), rgba(15,23,42,.45));
   }
 
   .viz-wrap {
-    width: min(540px, 72%);
+    width: 100%;
     border-radius: 999px;
     border: 1px solid rgba(125,211,252,.28);
     background: rgba(15,23,42,.56);
     padding: 7px 14px;
   }
 
-  .caption-slot {
-    min-height: 70px;
+  .dock-status {
     display:flex;
-    align-items:center;
+    flex-direction:column;
+    gap:6px;
+    font-size:.85rem;
+  }
+
+  .dock-status .status {
+    color:#e2e8f0;
+    font-weight:600;
+    text-transform:uppercase;
+    letter-spacing:.08em;
+    font-size:.7rem;
+  }
+
+  .dock-status .transcript {
+    color:#bae6fd;
+    font-size:.85rem;
+  }
+
+  .dock-status .hint {
+    color:#94a3b8;
   }
 
   .right-stage {
@@ -142,9 +170,7 @@
     background: linear-gradient(145deg, rgba(186,230,253,.08), transparent 34%, transparent 70%, rgba(56,189,248,.06));
   }
 
-  .scratchpad-hero {
-    transform: translateY(2px);
-  }
+  .scratchpad-hero { transform: translateY(2px); }
 
   .agent-hero {
     border-color: rgba(45,212,191,.4);
@@ -159,5 +185,7 @@
 
   @media (max-width: 860px) {
     .right-stage { grid-template-columns: 1fr; }
+    .dock { grid-template-columns: auto 1fr; grid-template-rows: auto auto; }
+    .dock-status { grid-column: 1 / -1; }
   }
 </style>

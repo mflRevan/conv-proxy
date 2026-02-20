@@ -14,7 +14,7 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: '../webapp/dist',
+    outDir: 'dist',
     emptyOutDir: true
   }
 })

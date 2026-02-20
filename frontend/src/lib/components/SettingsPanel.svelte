@@ -1,59 +1,15 @@
 <script lang="ts">
   import { settings } from '../stores/settings';
+  import { conversation } from '../stores/conversation';
 
   const sttBackends = [
-    'moonshine-tiny',
-    'moonshine-base',
     'whisper-tiny',
     'whisper-small',
     'whisper-medium',
+    'moonshine-tiny',
+    'moonshine-base',
+    'browser',
   ];
-
-  let bridgeSessionId = "";
-  let bridgeConfigured = false;
-  let bridgeDispatchEnabled = false;
-
-  async function refreshBridge() {
-    try {
-      const res = await fetch('/api/bridge/status');
-      const data = await res.json();
-      bridgeSessionId = data.session_id || "";
-      bridgeConfigured = !!data.configured;
-      bridgeDispatchEnabled = !!data.dispatch_enabled;
-    } catch {}
-  }
-
-  async function bindBridge() {
-    await fetch('/api/bridge/bind', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: bridgeSessionId.trim(), dispatch_enabled: bridgeDispatchEnabled }),
-    });
-    await refreshBridge();
-  }
-
-  async function bindMainSession() {
-    await fetch('/api/bridge/bind-main', { method: 'POST' });
-    await refreshBridge();
-  }
-
-  async function setDispatchEnabled(enabled: boolean) {
-    bridgeDispatchEnabled = enabled;
-    await fetch('/api/bridge/dispatch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
-    });
-    await refreshBridge();
-  }
-
-  async function startMockFlow() {
-    await fetch('/api/mock-agent/start', { method: 'POST' });
-  }
-
-  async function stopMockFlow() {
-    await fetch('/api/mock-agent/stop', { method: 'POST' });
-  }
 
   function close() {
     settings.update(s => ({ ...s, showSettings: false }));
@@ -65,173 +21,198 @@
     }
   }
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      close();
-    }
-  }
+  $: ctx = $conversation;
+  $: promptOther = Math.max(0, (ctx.promptChars || 0)
+    - (ctx.proxyMdChars || 0)
+    - (ctx.compressedChars || 0)
+    - (ctx.historyTextChars || 0)
+    - (ctx.historyFullChars || 0)
+    - (ctx.liveTurnChars || 0)
+    - (ctx.scratchpadChars || 0)
+    - (ctx.queuedChars || 0));
 
-  $: if ($settings.showSettings) {
-    refreshBridge();
+  $: segments = [
+    { label: 'Proxy MD', value: ctx.proxyMdChars, color: '#38bdf8' },
+    { label: 'Compressed', value: ctx.compressedChars, color: '#a78bfa' },
+    { label: 'Main history', value: ctx.historyTextChars, color: '#60a5fa' },
+    { label: 'Full-res', value: ctx.historyFullChars, color: '#fbbf24' },
+    { label: 'Live turn', value: ctx.liveTurnChars, color: '#34d399' },
+    { label: 'Scratchpad', value: ctx.scratchpadChars, color: '#f472b6' },
+    { label: 'Queued', value: ctx.queuedChars, color: '#fb7185' },
+    { label: 'Proxy chat', value: ctx.conversationChars, color: '#94a3b8' },
+    { label: 'Other prompt', value: promptOther, color: '#64748b' },
+  ].filter(s => (s.value || 0) > 0);
+
+  $: total = segments.reduce((sum, s) => sum + (s.value || 0), 0) || 1;
+  $: pieStyle = `background: conic-gradient(${segments.map((s, i) => {
+    const start = segments.slice(0, i).reduce((sum, v) => sum + v.value, 0) / total * 360;
+    const end = (segments.slice(0, i + 1).reduce((sum, v) => sum + v.value, 0) / total * 360);
+    return `${s.color} ${start}deg ${end}deg`;
+  }).join(',')});`;
+
+  $: legendItems = segments.map(s => ({
+    ...s,
+    k: Math.max(0.1, Math.round((s.value || 0) / 100) / 10),
+  }));
+
+  async function applySettings() {
+    const s = $settings;
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        proxyModel: s.proxyModel,
+        proxyTemperature: s.proxyTemperature,
+        proxyMaxTokens: s.proxyMaxTokens,
+        historyLength: s.historyLength,
+        compressedContext: s.compressedContextEnabled ? s.compressedContext : '',
+        mainHistoryLength: s.mainHistoryLength,
+        mainHistoryFullCount: s.mainHistoryFullCount,
+        sttBackend: s.sttBackend,
+        ttsEnabled: s.ttsEnabled,
+        vadThreshold: s.vadThreshold,
+        silenceDurationMs: s.silenceDurationMs,
+        wakewordEnabled: s.wakewordEnabled,
+        wakewordThreshold: s.wakewordThreshold,
+        wakewordActiveWindowMs: s.wakewordActiveWindowMs,
+        gatewayUrl: s.gatewayUrl,
+        gatewayToken: s.gatewayToken,
+      }),
+    });
   }
 </script>
 
 {#if $settings.showSettings}
-  <div 
-    class="settings-overlay" 
-    on:click={handleBackdropClick}
-    on:keydown={handleKeydown}
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="settings-title"
-    tabindex="-1"
-  >
+  <div class="settings-overlay" on:click={handleBackdropClick}>
     <div class="settings-panel">
       <div class="panel-header">
-        <h2 id="settings-title">Settings</h2>
+        <h2>Settings</h2>
         <button class="close-button" on:click={close} aria-label="Close settings">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
+          ✕
         </button>
       </div>
 
       <div class="panel-content">
-        <div class="setting-group">
-          <label for="stt-backend">Speech Recognition Backend</label>
-          <select 
-            id="stt-backend" 
-            bind:value={$settings.sttBackend}
-          >
-            {#each sttBackends as backend}
-              <option value={backend}>{backend}</option>
-            {/each}
-          </select>
-          <p class="hint">Choose the speech-to-text model. Smaller models are faster but less accurate.</p>
-        </div>
-
-        <div class="setting-group">
-          <label class="toggle-label">
-            <input 
-              type="checkbox" 
-              bind:checked={$settings.ttsEnabled}
-            />
-            <span>Enable Text-to-Speech</span>
+        <section>
+          <h3>Proxy Agent</h3>
+          <label>
+            Model (OpenRouter ID)
+            <input type="text" bind:value={$settings.proxyModel} />
           </label>
-          <p class="hint">Play audio responses from the assistant.</p>
-        </div>
+          <label>
+            Temperature
+            <input type="number" step="0.1" min="0" max="1" bind:value={$settings.proxyTemperature} />
+          </label>
+          <label>
+            Max Tokens
+            <input type="number" min="64" max="4096" bind:value={$settings.proxyMaxTokens} />
+          </label>
+        </section>
 
-        <div class="setting-group">
-          <label for="vad-threshold">Voice Activity Detection Threshold</label>
-          <div class="slider-group">
-            <input 
-              id="vad-threshold"
-              type="range" 
-              min="0" 
-              max="1" 
-              step="0.05"
-              bind:value={$settings.vadThreshold}
-            />
-            <span class="slider-value">{Math.round($settings.vadThreshold * 100)}%</span>
+        <section>
+          <h3>Context</h3>
+          <div class="context-row">
+            <div class="context-controls">
+              <label>
+                Proxy history length (pairs)
+                <input type="number" min="4" max="40" bind:value={$settings.historyLength} />
+              </label>
+              <label>
+                Main agent history length (messages)
+                <input type="number" min="5" max="80" bind:value={$settings.mainHistoryLength} />
+              </label>
+              <label>
+                Main agent full-resolution window (messages)
+                <input type="number" min="1" max="20" bind:value={$settings.mainHistoryFullCount} />
+              </label>
+              <label class="toggle">
+                <input type="checkbox" bind:checked={$settings.compressedContextEnabled} />
+                <span>Use compressed context</span>
+              </label>
+              <textarea
+                rows="3"
+                placeholder="Compressed context summary"
+                bind:value={$settings.compressedContext}
+              ></textarea>
+            </div>
+
+            <div class="context-preview">
+              <div class="chart" style={pieStyle}></div>
+              <div class="legend">
+                {#each legendItems as item}
+                  <div class="legend-row">
+                    <span class="swatch" style={`background:${item.color}`}></span>
+                    <span class="label">{item.label}</span>
+                    <span class="value">{item.k}k</span>
+                  </div>
+                {/each}
+              </div>
+              <div class="context-total">Total: {Math.round($conversation.contextChars / 1000)}k chars</div>
+            </div>
           </div>
-          <p class="hint">Adjust sensitivity for detecting speech. Lower values are more sensitive.</p>
-        </div>
+        </section>
 
-        <div class="setting-group">
-          <label for="silence-duration">Silence End Duration (ms)</label>
-          <div class="slider-group">
-            <input
-              id="silence-duration"
-              type="range"
-              min="400"
-              max="2000"
-              step="50"
-              bind:value={$settings.silenceDurationMs}
-            />
-            <span class="slider-value">{$settings.silenceDurationMs}</span>
-          </div>
-          <p class="hint">How long silence must last before a turn ends (server VAD).</p>
-        </div>
-
-        <div class="setting-group">
-          <label class="toggle-label">
-            <input 
-              type="checkbox" 
-              bind:checked={$settings.autoSend}
-            />
+        <section>
+          <h3>Voice</h3>
+          <label>
+            STT Backend
+            <select bind:value={$settings.sttBackend}>
+              {#each sttBackends as backend}
+                <option value={backend}>{backend}</option>
+              {/each}
+            </select>
+          </label>
+          <label>
+            VAD Threshold
+            <input type="range" min="0.1" max="1" step="0.05" bind:value={$settings.vadThreshold} />
+          </label>
+          <label>
+            Silence Duration (ms)
+            <input type="number" min="300" max="2000" bind:value={$settings.silenceDurationMs} />
+          </label>
+          <label class="toggle">
+            <input type="checkbox" bind:checked={$settings.autoSend} />
             <span>Auto-send on silence</span>
           </label>
-          <p class="hint">Turn handling is voice-first; silence triggers processing.</p>
-        </div>
-
-        <div class="setting-group">
-          <label class="toggle-label">
-            <input
-              type="checkbox"
-              bind:checked={$settings.wakewordEnabled}
-            />
-            <span>Wakeword activation (Hey Jarvis)</span>
+          <label class="toggle">
+            <input type="checkbox" bind:checked={$settings.wakewordEnabled} />
+            <span>Wakeword enabled</span>
           </label>
-          <p class="hint">Requires "hey jarvis" before processing speech.</p>
-        </div>
+          <label>
+            Wakeword Threshold
+            <input type="range" min="0.2" max="0.9" step="0.05" bind:value={$settings.wakewordThreshold} />
+          </label>
+          <label>
+            Wakeword Timeout (ms)
+            <input type="number" min="2000" max="20000" bind:value={$settings.wakewordActiveWindowMs} />
+          </label>
+        </section>
 
-        <div class="setting-group">
-          <label for="wakeword-threshold">Wakeword Threshold</label>
-          <div class="slider-group">
-            <input
-              id="wakeword-threshold"
-              type="range"
-              min="0.2"
-              max="0.9"
-              step="0.05"
-              bind:value={$settings.wakewordThreshold}
-            />
-            <span class="slider-value">{Math.round($settings.wakewordThreshold * 100)}%</span>
-          </div>
-          <p class="hint">Higher = stricter wakeword detection.</p>
-        </div>
-        <div class="setting-group">
-          <label for="wakeword-window">Wakeword Idle Timeout (ms)</label>
-          <div class="slider-group">
-            <input
-              id="wakeword-window"
-              type="range"
-              min="5000"
-              max="30000"
-              step="500"
-              bind:value={$settings.wakewordActiveWindowMs}
-            />
-            <span class="slider-value">{$settings.wakewordActiveWindowMs}</span>
-          </div>
-          <p class="hint">How long before returning to idle after no speech is detected.</p>
-        </div>
+        <section>
+          <h3>TTS</h3>
+          <label class="toggle">
+            <input type="checkbox" bind:checked={$settings.ttsEnabled} />
+            <span>Enable text-to-speech</span>
+          </label>
+        </section>
 
-        <div class="setting-group">
-          <label for="bridge-session">Agent Bridge Session</label>
-          <div class="bridge-row">
-            <input id="bridge-session" type="text" bind:value={bridgeSessionId} placeholder="OpenClaw session id" />
-            <button class="mini-btn" on:click={bindBridge}>Bind</button>
-          </div>
-          <p class="hint">Status: {bridgeConfigured ? 'connected' : 'not bound'} · dispatch {bridgeDispatchEnabled ? 'on' : 'safe/off'}</p>
-          <div class="bridge-row" style="margin-top:8px;">
-            <button class="mini-btn" on:click={bindMainSession}>Bind Main Session</button>
-            <label class="toggle-label compact">
-              <input type="checkbox" checked={bridgeDispatchEnabled} on:change={(e) => setDispatchEnabled((e.currentTarget as HTMLInputElement).checked)} />
-              <span>Live dispatch</span>
-            </label>
-          </div>
+        <section>
+          <h3>Connection</h3>
+          <label>
+            Gateway URL
+            <input type="text" bind:value={$settings.gatewayUrl} placeholder="ws://127.0.0.1:18789" />
+          </label>
+          <label>
+            Gateway Token
+            <input type="password" bind:value={$settings.gatewayToken} />
+          </label>
+          <button class="secondary" on:click={applySettings}>Reconnect</button>
+        </section>
+      </div>
 
-        </div>
-
-        <div class="setting-group">
-          <p class="group-title">Mock Agent Flow</p>
-          <div class="bridge-row">
-            <button class="mini-btn" on:click={startMockFlow}>Start mock</button>
-            <button class="mini-btn danger" on:click={stopMockFlow}>Stop mock</button>
-          </div>
-          <p class="hint">Use this when real bridge is unavailable.</p>
-        </div>
+      <div class="panel-footer">
+        <button class="secondary" on:click={close}>Close</button>
+        <button on:click={applySettings}>Apply</button>
       </div>
     </div>
   </div>
@@ -240,286 +221,88 @@
 <style>
   .settings-overlay {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(4px);
+    inset: 0;
+    background: rgba(2, 6, 23, 0.7);
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 100;
-    animation: fadeIn 0.2s ease;
+    z-index: 50;
   }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
   .settings-panel {
-    background: linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(30, 41, 59, 0.98));
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    border-radius: 16px;
-    max-width: 500px;
-    width: 90%;
-    max-height: 80vh;
-    overflow: hidden;
-    animation: slideUp 0.3s ease;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-  }
-
-  @keyframes slideUp {
-    from {
-      transform: translateY(20px);
-      opacity: 0;
-    }
-    to {
-      transform: translateY(0);
-      opacity: 1;
-    }
-  }
-
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 24px;
-    border-bottom: 1px solid rgba(59, 130, 246, 0.2);
-  }
-
-  .panel-header h2 {
-    margin: 0;
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: #e2e8f0;
-  }
-
-  .close-button {
-    background: none;
-    border: none;
-    color: #94a3b8;
-    cursor: pointer;
-    padding: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
-    border-radius: 8px;
-  }
-
-  .close-button:hover {
-    background: rgba(239, 68, 68, 0.2);
-    color: #f87171;
-  }
-
-  .close-button svg {
-    width: 20px;
-    height: 20px;
-    stroke-width: 2.5;
-  }
-
-  .panel-content {
-    padding: 24px;
-    overflow-y: auto;
-    max-height: calc(80vh - 80px);
-  }
-
-  .setting-group {
-    margin-bottom: 28px;
-  }
-
-  .setting-group:last-child {
-    margin-bottom: 0;
-  }
-
-  .group-title {
-    margin: 0 0 8px;
-    font-size: 0.9rem;
-    font-weight: 500;
-    color: #cbd5e1;
-  }
-
-  .setting-group > label {
-    display: block;
-    font-size: 0.9rem;
-    font-weight: 500;
-    color: #cbd5e1;
-    margin-bottom: 8px;
-  }
-
-  select {
-    width: 100%;
-    padding: 12px;
-    background: rgba(15, 23, 42, 0.8);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    border-radius: 8px;
-    color: #e2e8f0;
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  select:hover {
-    border-color: rgba(59, 130, 246, 0.5);
-  }
-
-  select:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  }
-
-  .toggle-label {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    cursor: pointer;
-    padding: 12px;
-    background: rgba(15, 23, 42, 0.4);
-    border: 1px solid rgba(59, 130, 246, 0.2);
-    border-radius: 8px;
-    transition: all 0.2s ease;
-  }
-
-  .toggle-label:hover {
-    background: rgba(15, 23, 42, 0.6);
-    border-color: rgba(59, 130, 246, 0.4);
-  }
-
-  .toggle-label input[type="checkbox"] {
-    width: 44px;
-    height: 24px;
-    position: relative;
-    appearance: none;
-    background: rgba(71, 85, 105, 0.5);
-    border-radius: 12px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    flex-shrink: 0;
-  }
-
-  .toggle-label input[type="checkbox"]:checked {
-    background: #3b82f6;
-  }
-
-  .toggle-label input[type="checkbox"]::before {
-    content: '';
-    position: absolute;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: white;
-    top: 3px;
-    left: 3px;
-    transition: all 0.3s ease;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-  }
-
-  .toggle-label input[type="checkbox"]:checked::before {
-    left: 23px;
-  }
-
-  .toggle-label span {
-    color: #e2e8f0;
-    font-size: 0.9rem;
-  }
-  .toggle-label.compact { padding: 8px 10px; gap: 8px; }
-  .toggle-label.compact input[type="checkbox"] { width: 36px; height: 20px; }
-  .toggle-label.compact input[type="checkbox"]::before { width: 14px; height: 14px; top:3px; left:3px; }
-  .toggle-label.compact input[type="checkbox"]:checked::before { left: 19px; }
-  .toggle-label.compact span { font-size: .8rem; }
-
-  .slider-group {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .bridge-row { display:flex; gap:10px; align-items:center; }
-  .bridge-row input {
-    flex:1;
-    padding: 10px 12px;
-    background: rgba(15,23,42,.8);
+    width: min(900px, 92vw);
+    max-height: 90vh;
+    overflow: auto;
+    background: #0f172a;
     border: 1px solid rgba(59,130,246,.25);
+    border-radius: 18px;
+    padding: 20px 24px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .panel-header {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .panel-content {
+    display:grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 18px;
+  }
+  .context-row { display:grid; grid-template-columns: 1.3fr 1fr; gap:14px; }
+  .context-controls { display:flex; flex-direction:column; gap:10px; }
+  .context-preview { display:flex; flex-direction:column; gap:12px; align-items:center; justify-content:center; }
+  .chart { width:140px; height:140px; border-radius:50%; border:1px solid rgba(148,163,184,.3); box-shadow: inset 0 0 18px rgba(15,23,42,.6); }
+  .legend { width:100%; display:flex; flex-direction:column; gap:6px; }
+  .legend-row { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:.72rem; color:#cbd5e1; }
+  .swatch { width:10px; height:10px; border-radius:2px; display:inline-block; }
+  .label { flex:1; }
+  .value { color:#93c5fd; }
+  .context-total { font-size:.75rem; color:#94a3b8; }
+  @media (max-width: 860px) { .context-row { grid-template-columns: 1fr; } }
+  section {
+    display:flex;
+    flex-direction:column;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(148,163,184,.18);
+    background: rgba(15,23,42,.5);
+  }
+  h3 { margin:0 0 4px; font-size:0.95rem; color:#e2e8f0; }
+  label { display:flex; flex-direction:column; gap:6px; font-size:0.8rem; color:#cbd5e1; }
+  input, select, textarea {
+    background: rgba(2,6,23,.8);
+    border: 1px solid rgba(59,130,246,.3);
     border-radius: 8px;
+    padding: 8px 10px;
     color: #e2e8f0;
   }
-  .mini-btn {
-    padding: 9px 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(59,130,246,.3);
-    background: rgba(30,41,59,.65);
-    color: #dbeafe;
+  .toggle { flex-direction: row; align-items:center; gap:8px; }
+  .panel-footer {
+    display:flex;
+    justify-content:flex-end;
+    gap:10px;
+  }
+  button {
+    background:#2563eb;
+    color:white;
+    border:none;
+    border-radius:10px;
+    padding:8px 16px;
     cursor:pointer;
   }
-  .mini-btn.danger { border-color: rgba(239,68,68,.35); color:#fecaca; }
-
-  input[type="range"] {
-    flex: 1;
-    height: 6px;
-    border-radius: 3px;
-    background: rgba(71, 85, 105, 0.5);
-    outline: none;
-    appearance: none;
+  button.secondary {
+    background: transparent;
+    border: 1px solid rgba(148,163,184,.4);
+    color:#cbd5e1;
   }
-
-  input[type="range"]::-webkit-slider-thumb {
-    appearance: none;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: #3b82f6;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  input[type="range"]::-webkit-slider-thumb:hover {
-    transform: scale(1.2);
-    box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.2);
-  }
-
-  input[type="range"]::-moz-range-thumb {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: #3b82f6;
+  .close-button {
+    background: transparent;
     border: none;
+    color: #94a3b8;
+    font-size: 1.1rem;
     cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .slider-value {
-    min-width: 45px;
-    text-align: right;
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: #60a5fa;
-  }
-
-  .hint {
-    margin: 8px 0 0;
-    font-size: 0.75rem;
-    color: #64748b;
-    line-height: 1.4;
-  }
-
-  @media (max-width: 640px) {
-    .settings-panel {
-      width: 95%;
-    }
-
-    .panel-header {
-      padding: 20px;
-    }
-
-    .panel-content {
-      padding: 20px;
-    }
   }
 </style>

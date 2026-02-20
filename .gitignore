@@ -1,13 +1,38 @@
-.venv-kokoro/
+# Python
 __pycache__/
-.pytest_cache/
 *.pyc
-.env
-*.wav
-.cache/
-models/
-runners/
-webapp/.bridge_session_id
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
 
-.convproxy.pid
-convproxy.log
+# Venv
+.venv*/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Models (large files)
+models/whisper/
+models/kokoro/
+models/lfm-*/
+
+# Frontend build
+frontend/node_modules/
+
+# Data
+.clawproxy/
+
+# Env
+.env
